@@ -1062,6 +1062,21 @@ async function handle(req, res, pathname, { token }) {
     return true;
   }
 
+  if (method === 'GET' && pathname === '/api/team-templates') {
+    sendJson(res, 200, { templates: teams.listTeamTemplates() });
+    return true;
+  }
+
+  const templateDraft = pathname.match(/^\/api\/team-templates\/([\w-]+)\/draft$/);
+  if (method === 'GET' && templateDraft) {
+    try {
+      sendJson(res, 200, { team: teams.draftFromTemplate(templateDraft[1]) });
+    } catch (err) {
+      sendJson(res, err instanceof teams.TeamError ? err.code : 500, { error: err.message });
+    }
+    return true;
+  }
+
   if (pathname === '/api/teams' || pathname.startsWith('/api/teams/')) {
     if (await handleTeams(req, res, method, pathname)) return true;
   }

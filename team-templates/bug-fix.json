@@ -1,0 +1,37 @@
+{
+  "title": "Bug fix squad",
+  "description": "Reproduce, fix the root cause, then lock it in with a regression test, one step after another.",
+  "leader": {
+    "provider": "claude",
+    "effort": "high",
+    "instructions": "Plan a bug fix as three tasks in order: (1) the bug-triager reproduces the bug and reports the root cause with file and line, without changing production code; (2) a developer fixes the root cause, depending on task 1; (3) the test-engineer adds a regression test that fails without the fix, depending on task 2. Keep the fix small; no refactors or unrelated changes."
+  },
+  "members": [
+    {
+      "provider": "agy",
+      "roles": [
+        "bug-triager"
+      ],
+      "notes": "Reproduces the bug and finds the root cause"
+    },
+    {
+      "provider": "agy",
+      "roles": [
+        "lead-software-engineer",
+        "web-engineer",
+        "api-engineer",
+        "mobile-engineer"
+      ],
+      "notes": "Fixes the root cause"
+    },
+    {
+      "provider": "codex",
+      "roles": [
+        "test-engineer"
+      ],
+      "notes": "Regression test that fails without the fix"
+    }
+  ],
+  "maxParallel": 1,
+  "review": true
+}

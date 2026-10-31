@@ -44,6 +44,8 @@ Usage:
   a2a-panel teams [list]              List configured developer teams
   a2a-panel teams show <id>           Show team details, leader and members
   a2a-panel teams new <id> --file <f> Create a team from a JSON definition file
+  a2a-panel teams templates           List team templates (web, iOS, Android, Flutter, API, bug fix, review, release)
+  a2a-panel teams new <id> --template <t> Create a team from a template, with your accounts picked
   a2a-panel teams delete <id>         Delete a team
   a2a-panel teams run <id> "<goal>"   Run a team on a goal (--workspace, --plan)
   a2a-panel teams runs                List recent team runs
@@ -724,10 +726,29 @@ async function handleTeams(args) {
       return;
     }
 
+    if (sub === 'templates') {
+      for (const t of teams.listTeamTemplates()) {
+        const roles = [...new Set(t.members.flatMap((m) => m.roles))].join(', ');
+        console.log(`${t.id.padEnd(14)} ${t.title}\n${' '.repeat(15)}${t.description}\n${' '.repeat(15)}Roles: ${roles}\n`);
+      }
+      console.log('Create one with: a2a-panel teams new <id> --template <template>');
+      return;
+    }
+
+    if (sub === 'new' && option('--template')) {
+      if (!id) throw new Error('Usage: a2a-panel teams new <id> --template <template>');
+      const { template, ...draft } = teams.draftFromTemplate(option('--template'));
+      const created = teams.createTeam({ ...draft, id });
+      console.log(`Created team "${created.id}" (${created.name}) from template "${template}".`);
+      console.log(`Leader: ${created.leader.account}. Members: ${created.members.map((m) => `${m.account} (${m.roles.join(', ')})`).join('; ')}.`);
+      console.log(`Change it in the panel (Teams) or with a JSON file and "a2a-panel teams new <id> --file".`);
+      return;
+    }
+
     if (sub === 'new') {
       if (!id) throw new Error('Usage: a2a-panel teams new <id> --file <team.json>');
       const filePath = option('--file');
-      if (!filePath) throw new Error('--file <path> is required');
+      if (!filePath) throw new Error('--file <path> or --template <template> is required');
       if (!fs.existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
       const raw = fs.readFileSync(filePath, 'utf-8');
       let data;

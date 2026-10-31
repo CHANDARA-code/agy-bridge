@@ -439,6 +439,27 @@ export interface AccountModels {
   error: string | null;
 }
 
+export interface TeamTemplate {
+  id: string;
+  title: string;
+  description: string;
+  leader: { provider: ProviderId; effort: string; instructions: string };
+  members: { provider: ProviderId; roles: string[]; notes: string }[];
+  maxParallel: number;
+  review: boolean;
+}
+
+export interface TeamDraft {
+  id: string;
+  name: string;
+  description: string;
+  leader: { account: string; model: string | null; effort: string; instructions: string };
+  members: TeamMember[];
+  maxParallel: number;
+  review: boolean;
+  template: string;
+}
+
 export const api = {
   health: () => request<Health>("/api/health"),
   version: (refresh = false) => request<VersionInfo>(`/api/version${refresh ? "?refresh=1" : ""}`),
@@ -500,6 +521,8 @@ export const api = {
   deleteAccountBudget: (id: string) =>
     request<{ account: Account }>(`/api/accounts/${id}/budget`, { method: "DELETE" }).then((r) => r.account),
   teams: () => request<{ teams: Team[] }>("/api/teams").then((r) => r.teams),
+  teamTemplates: () => request<{ templates: TeamTemplate[] }>("/api/team-templates").then((r) => r.templates),
+  teamTemplateDraft: (id: string) => request<{ team: TeamDraft }>(`/api/team-templates/${encodeURIComponent(id)}/draft`).then((r) => r.team),
   team: (id: string) => request<{ team: Team }>(`/api/teams/${id}`).then((r) => r.team),
   createTeam: (input: Omit<Team, "createdAt" | "updatedAt">) =>
     request<{ team: Team }>("/api/teams", { method: "POST", body: JSON.stringify(input) }).then((r) => r.team),

@@ -1,0 +1,35 @@
+{
+  "title": "Backend API",
+  "description": "Backend endpoints built contract first: schema, implementation and tests in order.",
+  "leader": {
+    "provider": "claude",
+    "effort": "high",
+    "instructions": "Plan backend changes contract first: decide routes, payloads, status codes and error shapes in the first task. A schema change gets its own migration task that the code depends on. Tests come in a task that depends on the implementation. Never plan a breaking change to a shipped endpoint without calling it out in the summary. verification_command is the project's test command."
+  },
+  "members": [
+    {
+      "provider": "agy",
+      "roles": [
+        "api-engineer"
+      ],
+      "notes": "Endpoints, validation and business logic"
+    },
+    {
+      "provider": "agy",
+      "roles": [
+        "api-engineer"
+      ],
+      "notes": "Data model, migrations and queries"
+    },
+    {
+      "provider": "codex",
+      "roles": [
+        "test-engineer",
+        "security-auditor"
+      ],
+      "notes": "API tests and a security pass over the new endpoints"
+    }
+  ],
+  "maxParallel": 2,
+  "review": true
+}

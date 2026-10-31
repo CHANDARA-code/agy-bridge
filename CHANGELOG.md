@@ -4,6 +4,14 @@ All notable changes to a2a-panel are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Added
+
+- Team templates: web app, iOS, Android, Flutter, backend API, bug fix squad, review and audit, and release preparation. Pick one under Teams → New team or with `a2a-panel teams new <id> --template <template>`; the leader goes to an account of the suggested CLI that leads no other team yet, and each member gets its own signed-in account. `GET /api/team-templates`, `GET /api/team-templates/:id/draft`, `a2a-panel teams templates`.
+
+### Fixed
+
+- `npm run check` checks the syntax of the files in `src/` again (it only looked at the top-level entry files since the move).
+
 ## [0.3.0] - 2026-10-31
 
 ### Added

@@ -16,11 +16,12 @@ import {
 } from "antd";
 import { DeleteOutlined, PlusOutlined } from "@ant-design/icons";
 import { accountDisplayName, api } from "../api";
-import type { Account, PresetSummary, ProviderId, Role, Team, TeamMember } from "../api";
+import type { Account, PresetSummary, ProviderId, Role, Team, TeamDraft, TeamMember } from "../api";
 import { AccountStatusDot } from "./StatusTag";
 import { AccountAvatar } from "./AccountAvatar";
 import { ProviderIcon } from "./ProviderIcon";
 import { ModelSelect } from "./ModelSelect";
+import { TeamTemplatePicker } from "./TeamTemplatePicker";
 
 interface TeamEditorProps {
   open: boolean;
@@ -71,6 +72,40 @@ export function TeamEditor({ open, team, accounts, isMobile, onClose, onSaved }:
   const [roles, setRoles] = useState<Role[]>([]);
   const [presets, setPresets] = useState<PresetSummary[]>([]);
   const [workspaces, setWorkspaces] = useState<string[]>([]);
+  const [templateId, setTemplateId] = useState<string | null>(null);
+
+  const blankValues = (): FormValues => {
+    const defaultLeader = accounts[0]?.id ?? "agy";
+    return {
+      id: "",
+      name: "",
+      description: "",
+      leader: { account: defaultLeader, model: undefined, effort: "medium", instructions: "" },
+      members: [{ account: defaultLeader, roles: [], notes: "" }],
+      preset: "__default__",
+      workspace: undefined,
+      maxParallel: 1,
+      review: false,
+    };
+  };
+
+  const applyDraft = (draft: TeamDraft) => {
+    form.setFieldsValue({
+      id: draft.id,
+      name: draft.name,
+      description: draft.description,
+      leader: { account: draft.leader.account, model: undefined, effort: draft.leader.effort, instructions: draft.leader.instructions },
+      members: draft.members,
+      maxParallel: draft.maxParallel,
+      review: draft.review,
+    });
+    setTemplateId(draft.template);
+  };
+
+  const startBlank = () => {
+    form.setFieldsValue({ ...blankValues(), workspace: form.getFieldValue("workspace") });
+    setTemplateId(null);
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -103,29 +138,8 @@ export function TeamEditor({ open, team, accounts, isMobile, onClose, onSaved }:
         review: team.review,
       });
     } else {
-      const defaultLeader = accounts[0]?.id ?? "agy";
-      form.setFieldsValue({
-        id: "",
-        name: "",
-        description: "",
-        leader: {
-          account: defaultLeader,
-          model: undefined,
-          effort: "medium",
-          instructions: "",
-        },
-        members: [
-          {
-            account: defaultLeader,
-            roles: [],
-            notes: "",
-          },
-        ],
-        preset: "__default__",
-        workspace: undefined,
-        maxParallel: 1,
-        review: false,
-      });
+      form.setFieldsValue(blankValues());
+      setTemplateId(null);
     }
   }, [open, team, accounts, form]);
 
@@ -236,8 +250,17 @@ export function TeamEditor({ open, team, accounts, isMobile, onClose, onSaved }:
         </Flex>
       }
     >
+      {!team && <TeamTemplatePicker selected={templateId} onPick={applyDraft} onBlank={startBlank} />}
       <Form form={form} layout="vertical" requiredMark={false} disabled={submitting}>
         {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 16 }} />}
+        {!team && templateId && (
+          <Alert
+            type="info"
+            showIcon
+            message="Filled in from the template. Accounts were picked for you: the leader prefers an account that leads no other team, and each member gets a different signed-in account where possible. Change anything before you save."
+            style={{ marginBottom: 16 }}
+          />
+        )}
 
         {!team && (
           <Form.Item

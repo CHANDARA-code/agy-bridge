@@ -232,6 +232,68 @@ function validateTeamData(data) {
   };
 }
 
+const TEAM_TEMPLATES_DIR = path.join(PACKAGE_ROOT, 'team-templates');
+
+function listTeamTemplates() {
+  let files = [];
+  try {
+    files = fs.readdirSync(TEAM_TEMPLATES_DIR).filter((f) => f.endsWith('.json')).sort();
+  } catch (err) {
+    return [];
+  }
+  const templates = [];
+  for (const file of files) {
+    try {
+      templates.push({ id: file.replace(/\.json$/, ''), ...JSON.parse(fs.readFileSync(path.join(TEAM_TEMPLATES_DIR, file), 'utf-8')) });
+    } catch (err) {}
+  }
+  return templates;
+}
+
+function getTeamTemplate(templateId) {
+  if (typeof templateId !== 'string' || !/^[\w-]+$/.test(templateId)) throw new TeamError('Invalid template id', 400);
+  const template = listTeamTemplates().find((t) => t.id === templateId);
+  if (!template) throw new TeamError(`Team template "${templateId}" not found`, 404);
+  return template;
+}
+
+function draftFromTemplate(templateId) {
+  const template = getTeamTemplate(templateId);
+  const all = accounts.listAccounts();
+  const signedIn = all.filter((a) => a.status && a.status.state === 'signed-in');
+  const pool = signedIn.length ? signedIn : all;
+  const pick = (provider, taken) => pool.find((a) => a.provider === provider && !taken.has(a.id)) || pool.find((a) => !taken.has(a.id)) || null;
+  const leading = new Set(listTeams().map((team) => team.leader.account));
+  const leader = pool.find((a) => a.provider === template.leader.provider && !leading.has(a.id))
+    || pick(template.leader.provider, new Set())
+    || all[0];
+  const used = new Set();
+  const members = [];
+  for (const slot of template.members) {
+    const account = pick(slot.provider, new Set([...used, leader.id])) || (used.has(leader.id) ? null : leader);
+    if (account) {
+      used.add(account.id);
+      members.push({ account: account.id, roles: [...slot.roles], notes: slot.notes || '' });
+    } else {
+      const last = members[members.length - 1];
+      last.roles = [...new Set([...last.roles, ...slot.roles])];
+      last.notes = [last.notes, slot.notes].filter(Boolean).join('; ').slice(0, 300);
+    }
+  }
+  let id = templateId;
+  for (let n = 2; fs.existsSync(teamFile(id)); n++) id = `${templateId}-${n}`;
+  return {
+    id,
+    name: template.title,
+    description: template.description,
+    leader: { account: leader.id, model: null, effort: template.leader.effort, instructions: template.leader.instructions },
+    members,
+    maxParallel: Math.min(template.maxParallel, members.length),
+    review: template.review,
+    template: template.id
+  };
+}
+
 function listTeams() {
   const dir = getTeamsDir();
   const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json') && !f.includes('.tmp'));
@@ -1142,6 +1204,9 @@ function cancelClaimedRun(runId) {
 }
 
 module.exports = {
+  listTeamTemplates,
+  getTeamTemplate,
+  draftFromTemplate,
   TeamError,
   RUN_ID_PATTERN,
   listTeams,

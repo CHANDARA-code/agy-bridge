@@ -21,7 +21,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node --test test/server.test.js test/accounts.test.js test/teams.test.js test/usage.test.js test/provider-icons.test.js test/events.test.js test/updates.test.js",
+    "test": "node --test test/server.test.js test/accounts.test.js test/teams.test.js test/usage.test.js test/provider-icons.test.js test/events.test.js test/updates.test.js test/team-templates.test.js",
     "check": "node scripts/check-consistency.js",
     "build:panel": "npm --prefix panel ci && npm --prefix panel run build",
     "prepack": "npm run build:panel"
@@ -35,6 +35,7 @@
     "agent.json",
     "personas",
     "preset-templates",
+    "team-templates",
     "panel/dist",
     "LICENSE",
     "CHANGELOG.md",

@@ -16,11 +16,15 @@ const readJson = (file) => {
   }
 };
 
-for (const file of fs.readdirSync(root).filter((name) => name.endsWith('.js'))) {
-  try {
-    execFileSync(process.execPath, ['--check', path.join(root, file)], { stdio: 'pipe' });
-  } catch (err) {
-    fail(`${file} has a syntax error: ${String(err.stderr || err.message).split('\n')[0]}`);
+for (const dir of ['.', 'src']) {
+  if (!fs.existsSync(path.join(root, dir))) continue;
+  for (const file of fs.readdirSync(path.join(root, dir)).filter((name) => name.endsWith('.js'))) {
+    const relative = path.join(dir, file);
+    try {
+      execFileSync(process.execPath, ['--check', path.join(root, relative)], { stdio: 'pipe' });
+    } catch (err) {
+      fail(`${relative} has a syntax error: ${String(err.stderr || err.message).split('\n')[0]}`);
+    }
   }
 }
 
@@ -88,9 +92,37 @@ for (const id of cardRoles) {
   if (!readme.includes(id)) fail(`README.md does not mention role ${id}`);
 }
 
+const PROVIDERS = ['agy', 'claude', 'codex'];
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+let teamTemplates = 0;
+if (fs.existsSync(path.join(root, 'team-templates'))) {
+  const knownRoles = new Set(cardRoles);
+  for (const file of fs.readdirSync(path.join(root, 'team-templates')).filter((name) => name.endsWith('.json'))) {
+    const where = `team-templates/${file}`;
+    const t = readJson(where);
+    if (!t) continue;
+    teamTemplates++;
+    if (typeof t.title !== 'string' || !t.title.trim() || t.title.length > 80) fail(`${where}: title must be 1 to 80 characters`);
+    if (typeof t.description !== 'string' || t.description.length > 300) fail(`${where}: description must be at most 300 characters`);
+    const leader = t.leader || {};
+    if (!PROVIDERS.includes(leader.provider)) fail(`${where}: leader.provider must be one of ${PROVIDERS.join(', ')}`);
+    if (!EFFORTS.includes(leader.effort)) fail(`${where}: leader.effort must be one of ${EFFORTS.join(', ')}`);
+    if (typeof leader.instructions !== 'string' || leader.instructions.length > 8000) fail(`${where}: leader.instructions must be at most 8000 characters`);
+    if (!Array.isArray(t.members) || t.members.length < 1 || t.members.length > 12) fail(`${where}: members must list 1 to 12 members`);
+    for (const m of t.members || []) {
+      if (!PROVIDERS.includes(m.provider)) fail(`${where}: member provider must be one of ${PROVIDERS.join(', ')}`);
+      if (!Array.isArray(m.roles) || !m.roles.length) fail(`${where}: every member needs at least one role`);
+      for (const role of m.roles || []) if (!knownRoles.has(role)) fail(`${where}: unknown role ${role}`);
+      if (typeof m.notes !== 'string' || m.notes.length > 300) fail(`${where}: member notes must be at most 300 characters`);
+    }
+    if (!Number.isInteger(t.maxParallel) || t.maxParallel < 1 || t.maxParallel > 4) fail(`${where}: maxParallel must be 1 to 4`);
+    if (typeof t.review !== 'boolean') fail(`${where}: review must be true or false`);
+  }
+}
+
 if (problems.length) {
   console.error(`Consistency check failed (${problems.length}):`);
   for (const problem of problems) console.error(`  - ${problem}`);
   process.exit(1);
 }
-console.log(`Consistency check passed (${cardRoles.length} roles).`);
+console.log(`Consistency check passed (${cardRoles.length} roles, ${teamTemplates} team templates).`);

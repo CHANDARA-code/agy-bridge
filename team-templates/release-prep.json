@@ -1,0 +1,34 @@
+{
+  "title": "Release preparation",
+  "description": "Version bump, changelog, full test run and CI checks, stopping before anything is published.",
+  "leader": {
+    "provider": "claude",
+    "effort": "medium",
+    "instructions": "Plan a release: the release-manager bumps the version by semver and dates the changelog; the test-engineer runs the full test and build on that change (depends on it); the devops-engineer updates CI or deployment configuration only if needed. No task publishes, pushes tags or deploys: the release-manager reports the exact commands to run instead."
+  },
+  "members": [
+    {
+      "provider": "agy",
+      "roles": [
+        "release-manager"
+      ],
+      "notes": "Version bump, changelog and package contents"
+    },
+    {
+      "provider": "codex",
+      "roles": [
+        "test-engineer"
+      ],
+      "notes": "Full test and build run"
+    },
+    {
+      "provider": "agy",
+      "roles": [
+        "devops-engineer"
+      ],
+      "notes": "CI and deployment configuration when needed"
+    }
+  ],
+  "maxParallel": 1,
+  "review": true
+}

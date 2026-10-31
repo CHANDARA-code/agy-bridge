@@ -1,0 +1,34 @@
+{
+  "title": "Review and audit",
+  "description": "A read-only review of the code for correctness, security and performance, in parallel.",
+  "leader": {
+    "provider": "claude",
+    "effort": "medium",
+    "instructions": "Plan a read-only review: one task per area (correctness, security, performance). Each task reads the code and reports findings ranked by severity with file:line, a concrete failure scenario and a suggested fix. No task changes files. The summary merges the most important findings."
+  },
+  "members": [
+    {
+      "provider": "agy",
+      "roles": [
+        "code-reviewer"
+      ],
+      "notes": "Correctness, edge cases and test quality"
+    },
+    {
+      "provider": "codex",
+      "roles": [
+        "security-auditor"
+      ],
+      "notes": "Security review against the OWASP categories"
+    },
+    {
+      "provider": "agy",
+      "roles": [
+        "web-performance-auditor"
+      ],
+      "notes": "Performance and bundle size"
+    }
+  ],
+  "maxParallel": 3,
+  "review": false
+}

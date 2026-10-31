@@ -1,0 +1,34 @@
+{
+  "title": "Cross-platform app (Flutter)",
+  "description": "Flutter features for iOS and Android with data, state, UI and tests in separate tasks.",
+  "leader": {
+    "provider": "codex",
+    "effort": "high",
+    "instructions": "Plan Flutter work feature by feature: data (repositories and models), state (providers) and presentation (widgets and routes) as separate tasks and files, data first. Any task that changes annotated models or providers must run code generation. When platform code changes, plan checks for both iOS and Android. verification_command is flutter analyze followed by flutter test."
+  },
+  "members": [
+    {
+      "provider": "agy",
+      "roles": [
+        "mobile-engineer"
+      ],
+      "notes": "Widgets, routes and platform UI"
+    },
+    {
+      "provider": "agy",
+      "roles": [
+        "mobile-engineer"
+      ],
+      "notes": "Repositories, models and providers"
+    },
+    {
+      "provider": "claude",
+      "roles": [
+        "test-engineer"
+      ],
+      "notes": "Unit, widget and integration tests"
+    }
+  ],
+  "maxParallel": 2,
+  "review": true
+}

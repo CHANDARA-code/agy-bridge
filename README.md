@@ -488,6 +488,28 @@ In traditional multi-agent orchestration, the orchestrator keeps all agent conte
 2. Each **developer** spends its own isolated provider quota and sees only what it needs to execute its assigned task.
 3. Intermediate file changes, logs, and tool calls never re-enter the leader's context window.
 
+### Team templates
+
+The quickest way to build a team: in the panel choose **Teams → New team** and pick a template, or run `a2a-panel teams new <id> --template <template>`. A template fills in the description, the leader's instructions and effort, the members' roles and notes, the parallel limit and leader review. It then picks your accounts:
+
+- The leader is an account of the suggested CLI that does not lead another team yet, so a second team gets a different leader (for example `claude` leads the iOS team and `claude-2` the Android team).
+- Each member gets a different signed-in account, preferring the CLI the template suggests. With fewer accounts than members, the remaining roles are merged into the last member.
+
+Everything stays editable before you save.
+
+| Template | Leader (suggested) | Members (roles) |
+|---|---|---|
+| `web-app` Web app (full stack) | Claude | web-engineer, api-engineer, test-engineer |
+| `ios-app` iOS app (SwiftUI) | Claude | mobile-engineer ×2, test-engineer |
+| `android-app` Android app (Kotlin, Compose) | Claude | mobile-engineer ×2, test-engineer |
+| `flutter-app` Cross-platform app (Flutter) | Codex | mobile-engineer ×2, test-engineer |
+| `api-service` Backend API | Claude | api-engineer ×2, test-engineer + security-auditor |
+| `bug-fix` Bug fix squad | Claude | bug-triager, a fixer (any engineering role), test-engineer; one step at a time |
+| `review-audit` Review and audit | Claude | code-reviewer, security-auditor, web-performance-auditor; read-only |
+| `release-prep` Release preparation | Claude | release-manager, test-engineer, devops-engineer; nothing is published |
+
+Templates are JSON files in `team-templates/`; `npm run check` validates their roles, CLIs and limits. API: `GET /api/team-templates` and `GET /api/team-templates/:id/draft` (a ready-to-save team with your accounts filled in).
+
 ### Example: Claude Leads iOS Development with Two Antigravity Developers
 
 Imagine an iOS app project where you want Claude Code to architect and coordinate tasks, while two Antigravity developer accounts do the actual Swift and UI implementation:
@@ -533,6 +555,8 @@ When `review: true` is enabled and at least one task completes, the leader runs 
 a2a-panel teams                                   # list configured developer teams
 a2a-panel teams show ios-squad                    # inspect team configuration
 a2a-panel teams new ios-squad --file team.json    # create team from JSON file
+a2a-panel teams templates                         # list team templates
+a2a-panel teams new ios --template ios-app        # create a team from a template, accounts picked for you
 a2a-panel teams delete ios-squad                  # delete team
 a2a-panel teams run ios-squad "Add dark mode"     # run team (foreground progress tracking)
 a2a-panel teams run ios-squad "Add dark mode" --plan # plan only
