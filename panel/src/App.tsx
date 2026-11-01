@@ -26,6 +26,7 @@ import { NewTaskModal } from "./components/NewTaskModal";
 import { TaskDrawer } from "./components/TaskDrawer";
 import { TaskList } from "./components/TaskList";
 import { UpdateModal } from "./components/UpdateModal";
+import { UsageChip } from "./components/UsageChip";
 
 type Filter = "all" | "running" | "completed" | "failed" | "cancelled" | "stale";
 type View = "tasks" | "teams" | "accounts" | "usage" | "presets" | "settings";
@@ -262,6 +263,7 @@ function Panel() {
               {isMobile ? null : updating ? "Updating…" : `Update to ${versionInfo.update.version ?? versionInfo.latest}`}
             </Button>
           )}
+          <UsageChip isMobile={isMobile} onOpenUsage={() => changeView("usage")} />
           <Button
             aria-label="Settings"
             title="Settings"
