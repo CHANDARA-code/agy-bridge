@@ -18,9 +18,18 @@ function getPeriodStart(period, now = new Date()) {
   throw new Error(`Invalid budget period: ${period}`);
 }
 
+let usageCache = { key: null, records: [] };
+
 function readUsageRecords() {
   const { USAGE_LOG } = require('./dispatcher');
-  if (!fs.existsSync(USAGE_LOG)) return [];
+  let stat;
+  try {
+    stat = fs.statSync(USAGE_LOG);
+  } catch (err) {
+    return [];
+  }
+  const key = `${USAGE_LOG}:${stat.mtimeMs}:${stat.size}`;
+  if (usageCache.key === key) return usageCache.records;
   let content = '';
   try {
     content = fs.readFileSync(USAGE_LOG, 'utf-8');
@@ -36,6 +45,7 @@ function readUsageRecords() {
       records.push({ ...record, account: record.account || 'agy', provider: record.provider || 'agy' });
     } catch (err) {}
   }
+  usageCache = { key, records };
   return records;
 }
 

@@ -210,6 +210,38 @@ export interface Account {
   limits?: AccountLimits | null;
   avatarUrl?: string | null;
   identity?: AccountIdentity | null;
+  apiKey?: AccountApiKey | null;
+}
+
+export interface AccountApiKey {
+  service: string;
+  serviceName: string;
+  baseUrl: string | null;
+  fastModel: string | null;
+  last4: string;
+}
+
+export interface ApiService {
+  id: string;
+  name: string;
+  engine: "claude" | "codex";
+  region: string;
+  baseUrl: string | null;
+  baseUrlHelp: string | null;
+  baseUrlRequired: boolean;
+  keyHint: string;
+  keyPage: string | null;
+  docs: string;
+  models: { main: string; fast: string };
+  needsModel: boolean;
+  checksKey: boolean;
+}
+
+export interface ApiKeyInput {
+  service: string;
+  key?: string;
+  baseUrl?: string | null;
+  fastModel?: string | null;
 }
 
 export interface AccountIdentity {
@@ -439,6 +471,70 @@ export interface AccountModels {
   error: string | null;
 }
 
+export type SettingSource = "env" | "file" | "default";
+export type SettingValue = number | boolean | string;
+
+export interface SettingEntry {
+  key: string;
+  group: "limits" | "updates" | "telegram";
+  type: "int" | "bool" | "url" | "path" | "secret" | "chat" | "idlist";
+  label: string;
+  help: string;
+  unit: string | null;
+  min?: number;
+  max?: number;
+  default: SettingValue;
+  value: SettingValue;
+  isSet?: boolean;
+  source: SettingSource;
+}
+
+export type TelegramState = "off" | "incomplete" | "starting" | "listening" | "retrying" | "error";
+
+export interface TelegramStatus {
+  state: TelegramState;
+  bot: string | null;
+  lastError: string | null;
+  since: string | null;
+  ignored: number;
+  inbox: number;
+  waiting: number;
+}
+
+export interface TelegramChat {
+  id: string;
+  type: string;
+  title: string;
+  users: { id: string; name: string }[];
+}
+
+export interface LogChunk {
+  text: string;
+  next: number;
+  reset: boolean;
+}
+
+export interface TeamTemplate {
+  id: string;
+  title: string;
+  description: string;
+  leader: { provider: ProviderId; effort: string; instructions: string };
+  members: { provider: ProviderId; roles: string[]; notes: string }[];
+  maxParallel: number;
+  review: boolean;
+}
+
+export interface TeamDraft {
+  id: string;
+  name: string;
+  description: string;
+  leader: { account: string; model: string | null; effort: string; instructions: string };
+  members: TeamMember[];
+  maxParallel: number;
+  review: boolean;
+  template: string;
+}
+
 export const api = {
   health: () => request<Health>("/api/health"),
   version: (refresh = false) => request<VersionInfo>(`/api/version${refresh ? "?refresh=1" : ""}`),
@@ -448,6 +544,14 @@ export const api = {
   tasks: () => request<{ tasks: Task[] }>("/api/tasks").then((r) => r.tasks),
   task: (id: string) => request<{ task: Task }>(`/api/tasks/${id}`).then((r) => r.task),
   log: (id: string) => request<string>(`/api/tasks/${id}/log`, {}, "text"),
+  settings: () => request<{ settings: SettingEntry[] }>("/api/settings").then((r) => r.settings),
+  saveSettings: (values: Record<string, SettingValue | null>) =>
+    request<{ settings: SettingEntry[] }>("/api/settings", { method: "PUT", body: JSON.stringify({ values }) }).then((r) => r.settings),
+  telegramStatus: () => request<{ status: TelegramStatus }>("/api/telegram/status").then((r) => r.status),
+  telegramTest: (input: { token?: string; chatId?: string }) =>
+    request<{ bot: string; sent: boolean }>("/api/telegram/test", { method: "POST", body: JSON.stringify(input) }),
+  telegramDiscover: (token?: string) =>
+    request<{ bot: string; chats: TelegramChat[] }>("/api/telegram/discover", { method: "POST", body: JSON.stringify({ token }) }),
   dispatch: (input: DispatchInput) =>
     request<{ taskId: string }>("/api/tasks", { method: "POST", body: JSON.stringify(input) }),
   cancel: (id: string) => request<{ id: string; status: string }>(`/api/tasks/${id}/cancel`, { method: "POST" }),
@@ -473,7 +577,10 @@ export const api = {
     request<{ account: Account }>(`/api/accounts/${id}/avatar`, { method: "PUT", body: JSON.stringify({ image }) }).then((r) => r.account),
   deleteAccountAvatar: (id: string) =>
     request<{ account: Account }>(`/api/accounts/${id}/avatar`, { method: "DELETE" }).then((r) => r.account),
-  createAccount: (input: { id: string; provider: ProviderId; label?: string; model?: string | null }) =>
+  apiServices: () => request<{ services: ApiService[] }>("/api/api-services").then((r) => r.services),
+  setApiKey: (id: string, input: Omit<ApiKeyInput, "service"> & { model?: string | null }) =>
+    request<{ account: Account }>(`/api/accounts/${id}/api-key`, { method: "PUT", body: JSON.stringify(input) }).then((r) => r.account),
+  createAccount: (input: { id: string; provider?: ProviderId; label?: string; model?: string | null; apiKey?: ApiKeyInput }) =>
     request<{ account: Account }>("/api/accounts", { method: "POST", body: JSON.stringify(input) }).then((r) => r.account),
   updateAccount: (id: string, input: { label?: string; model?: string | null }) =>
     request<{ account: Account }>(`/api/accounts/${id}`, { method: "PUT", body: JSON.stringify(input) }).then((r) => r.account),
@@ -500,6 +607,8 @@ export const api = {
   deleteAccountBudget: (id: string) =>
     request<{ account: Account }>(`/api/accounts/${id}/budget`, { method: "DELETE" }).then((r) => r.account),
   teams: () => request<{ teams: Team[] }>("/api/teams").then((r) => r.teams),
+  teamTemplates: () => request<{ templates: TeamTemplate[] }>("/api/team-templates").then((r) => r.templates),
+  teamTemplateDraft: (id: string) => request<{ team: TeamDraft }>(`/api/team-templates/${encodeURIComponent(id)}/draft`).then((r) => r.team),
   team: (id: string) => request<{ team: Team }>(`/api/teams/${id}`).then((r) => r.team),
   createTeam: (input: Omit<Team, "createdAt" | "updatedAt">) =>
     request<{ team: Team }>("/api/teams", { method: "POST", body: JSON.stringify(input) }).then((r) => r.team),

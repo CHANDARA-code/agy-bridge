@@ -5,6 +5,11 @@ if [ -n "$FAKE_ARGS_FILE" ]; then
     echo "HOME: $HOME"
     echo "CLAUDE_CONFIG_DIR: $CLAUDE_CONFIG_DIR"
     echo "ANTHROPIC_API_KEY_SET: $([ -n "$ANTHROPIC_API_KEY" ] && echo yes || echo no)"
+    echo "ANTHROPIC_AUTH_TOKEN_SET: $([ -n "$ANTHROPIC_AUTH_TOKEN" ] && echo yes || echo no)"
+    echo "ANTHROPIC_BASE_URL: $ANTHROPIC_BASE_URL"
+    echo "ANTHROPIC_CUSTOM_HEADERS_SET: $([ -n "$ANTHROPIC_CUSTOM_HEADERS" ] && echo yes || echo no)"
+    echo "ANTHROPIC_MODEL: $ANTHROPIC_MODEL"
+    echo "ANTHROPIC_DEFAULT_HAIKU_MODEL: $ANTHROPIC_DEFAULT_HAIKU_MODEL"
   } >> "$FAKE_ARGS_FILE"
 fi
 

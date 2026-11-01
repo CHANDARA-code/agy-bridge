@@ -2,10 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { Alert, App as AntApp, Button, Descriptions, Drawer, Flex, Popconfirm, Skeleton, Switch, Tag, Typography, theme } from "antd";
 import { CopyOutlined, FileMarkdownOutlined, ReloadOutlined, StopOutlined } from "@ant-design/icons";
 import { api } from "../api";
-import type { Task } from "../api";
-import { formatDateTime, formatDuration } from "../format";
+import type { LogChunk, Task } from "../api";
+import { formatDateTime } from "../format";
+import { LiveDuration } from "./LiveDuration";
 import { StatusTag } from "./StatusTag";
 import { AccountAvatar } from "./AccountAvatar";
+
+const MAX_LOG_CHARS = 400000;
+const LOG_TRUNCATED = "[... earlier output truncated ...]\n";
 
 interface TaskDrawerProps {
   taskId: string | null;
@@ -27,36 +31,84 @@ export function TaskDrawer({ taskId, summary, isMobile, cancelling, onClose, onC
   const [log, setLog] = useState<string>("");
   const [loadingLog, setLoadingLog] = useState<boolean>(false);
 
+  const nextOffset = useRef(0);
+  const taskRunning = summary ? summary.status === "running" : detail?.id === taskId ? detail.status === "running" : true;
+
   useEffect(() => {
-    if (!open || !taskId) {
-      setDetail(null);
-      setLog("");
+    setLog("");
+    setDetail(null);
+    nextOffset.current = 0;
+    setLoadingLog(Boolean(open && taskId));
+  }, [open, taskId]);
+
+  useEffect(() => {
+    if (!open || !taskId) return;
+    let source: EventSource | null = null;
+    let disposed = false;
+    const close = () => {
+      source?.close();
+      source = null;
+    };
+    const append = (chunk: LogChunk) => {
+      nextOffset.current = chunk.next;
       setLoadingLog(false);
-      return;
-    }
+      if (chunk.reset) setLog(chunk.text);
+      else if (chunk.text) setLog((current) => {
+        const joined = current + chunk.text;
+        return joined.length > MAX_LOG_CHARS ? LOG_TRUNCATED + joined.slice(joined.length - MAX_LOG_CHARS) : joined;
+      });
+    };
+    const connect = () => {
+      if (source || disposed || document.hidden) return;
+      const stream = new EventSource(`/api/tasks/${encodeURIComponent(taskId)}/log/stream?from=${nextOffset.current}`);
+      source = stream;
+      stream.addEventListener("log", (event) => {
+        try {
+          append(JSON.parse((event as MessageEvent).data));
+        } catch {
+          return;
+        }
+        if (!taskRunning) close();
+      });
+      stream.onerror = () => {
+        if (stream.readyState !== EventSource.CLOSED) return;
+        if (source === stream) source = null;
+        if (nextOffset.current > 0 || disposed) return;
+        api.log(taskId)
+          .then((text) => {
+            if (!disposed) setLog((current) => current || text);
+          })
+          .catch(() => {})
+          .finally(() => {
+            if (!disposed) setLoadingLog(false);
+          });
+      };
+    };
+    const onVisibility = () => (document.hidden ? close() : connect());
+    connect();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      disposed = true;
+      document.removeEventListener("visibilitychange", onVisibility);
+      close();
+    };
+  }, [open, taskId, taskRunning]);
+
+  useEffect(() => {
+    if (!open || !taskId) return;
     let cancelled = false;
-    setLoadingLog(true);
     api.task(taskId)
       .then((t) => {
         if (!cancelled) setDetail(t);
       })
       .catch(() => {});
-    api.log(taskId)
-      .then((l) => {
-        if (!cancelled) {
-          setLog(l);
-          setLoadingLog(false);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setLoadingLog(false);
-      });
     return () => {
       cancelled = true;
     };
-  }, [open, taskId, summary?.updatedAt, summary?.status]);
+  }, [open, taskId, summary?.status]);
 
-  const task: Task | undefined = detail && detail.id === taskId ? detail : summary;
+  const ownDetail = detail && detail.id === taskId ? detail : null;
+  const task: Task | undefined = summary ? { ...summary, prompt: ownDetail?.prompt ?? summary.prompt } : ownDetail ?? undefined;
   const fallbackActive = open && !summary && task?.status === "running";
 
   useEffect(() => {
@@ -64,9 +116,6 @@ export function TaskDrawer({ taskId, summary, isMobile, cancelling, onClose, onC
     const timer = setInterval(() => {
       api.task(taskId)
         .then((t) => setDetail(t))
-        .catch(() => {});
-      api.log(taskId)
-        .then((l) => setLog(l))
         .catch(() => {});
     }, 2500);
     return () => clearInterval(timer);
@@ -170,7 +219,7 @@ export function TaskDrawer({ taskId, summary, isMobile, cancelling, onClose, onC
               },
               { key: "started", label: "Started", children: formatDateTime(task.startedAt) },
               { key: "finished", label: "Finished", children: formatDateTime(task.finishedAt) },
-              { key: "duration", label: "Duration", children: formatDuration(task.durationMs) },
+              { key: "duration", label: "Duration", children: <LiveDuration task={task} /> },
               { key: "exit", label: "Exit code", children: task.exitCode ?? "-" },
             ]}
           />

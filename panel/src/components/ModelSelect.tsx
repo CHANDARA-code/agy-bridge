@@ -4,7 +4,7 @@ import { ReloadOutlined } from "@ant-design/icons";
 import { api } from "../api";
 import type { AccountModels } from "../api";
 
-const MODEL_ID = /^[A-Za-z0-9][\w.:-]{0,63}$/;
+const MODEL_ID = /^[A-Za-z0-9~][\w.:/~@+\[\]-]{0,127}$/;
 
 interface ModelSelectProps {
   accountId?: string | null;

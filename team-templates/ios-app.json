@@ -1,0 +1,34 @@
+{
+  "title": "iOS app (SwiftUI)",
+  "description": "iOS features in SwiftUI with views, view models and tests in separate tasks.",
+  "leader": {
+    "provider": "claude",
+    "effort": "high",
+    "instructions": "Plan iOS work in SwiftUI. Keep views, view models and services in separate tasks and files so they can be built in parallel; services and models come first when views depend on them. Follow the project's deployment target, architecture and package manager, and do not add frameworks without need. Tests use the framework the project already uses (XCTest or Swift Testing); verification_command is the project's xcodebuild test or swift test command."
+  },
+  "members": [
+    {
+      "provider": "agy",
+      "roles": [
+        "mobile-engineer"
+      ],
+      "notes": "SwiftUI views, navigation and accessibility"
+    },
+    {
+      "provider": "agy",
+      "roles": [
+        "mobile-engineer"
+      ],
+      "notes": "View models, services and persistence"
+    },
+    {
+      "provider": "codex",
+      "roles": [
+        "test-engineer"
+      ],
+      "notes": "Unit and UI tests"
+    }
+  ],
+  "maxParallel": 2,
+  "review": true
+}

@@ -10,11 +10,15 @@ const teams = require('./teams');
 const { findProviderIcon } = require('./provider-icons');
 const { PACKAGE_ROOT } = require('./config');
 const updates = require('./updates');
+const settings = require('./settings');
+const telegram = require('./telegram');
+const apiServices = require('./api-services');
 
 const BASE_PATH = '/dashboard';
 const DIST_DIR = path.join(PACKAGE_ROOT, 'panel', 'dist');
 const TOKEN_PLACEHOLDER = '__A2A_TOKEN__';
 const LEGACY_STALE_MS = 12 * 60 * 60 * 1000;
+const FINISH_GRACE_MS = 10000;
 const HEAD_BYTES = 16000;
 const DETAIL_HEAD_BYTES = 80000;
 const TAIL_BYTES = 6000;
@@ -149,7 +153,7 @@ function parseLog(id, headBytes = HEAD_BYTES) {
 
   let status = 'running';
   if (finished) status = finished[2];
-  else if (!isAlive(id)) status = 'stale';
+  else if (!isAlive(id)) status = Date.now() - stat.mtimeMs < FINISH_GRACE_MS ? 'running' : 'stale';
   else if (!hasPid && Date.now() - stat.mtimeMs > LEGACY_STALE_MS) status = 'stale';
   if (cancelRequested && (status === 'failed' || status === 'stale')) status = 'cancelled';
 
@@ -186,13 +190,28 @@ function toSummary(task) {
   return { ...rest, promptPreview: prompt.replace(/\s+/g, ' ').slice(0, 160) };
 }
 
+const summaryCache = new Map();
+const RUNNING_SUMMARY_TTL_MS = 1000;
+
+function cachedSummary(id, names) {
+  const stat = fs.statSync(path.join(LOGS_DIR, `${id}.log`));
+  const key = `${stat.mtimeMs}:${stat.size}:${names.has(`${id}.pid`) ? 1 : 0}:${names.has(`${id}.cancelled`) ? 1 : 0}`;
+  const hit = summaryCache.get(id);
+  if (hit && hit.key === key && (hit.summary.status !== 'running' || Date.now() - hit.at < RUNNING_SUMMARY_TTL_MS)) return hit.summary;
+  const summary = toSummary(parseLog(id));
+  summaryCache.set(id, { key, summary, at: Date.now() });
+  return summary;
+}
+
 function listTasks() {
   if (!fs.existsSync(LOGS_DIR)) return [];
-  return fs.readdirSync(LOGS_DIR)
-    .filter((f) => /^a2a_[\w-]+\.log$/.test(f))
-    .map((f) => {
+  const names = new Set(fs.readdirSync(LOGS_DIR));
+  const ids = [...names].filter((f) => /^a2a_[\w-]+\.log$/.test(f)).map((f) => f.replace(/\.log$/, ''));
+  for (const id of summaryCache.keys()) if (!names.has(`${id}.log`)) summaryCache.delete(id);
+  return ids
+    .map((id) => {
       try {
-        return toSummary(parseLog(f.replace(/\.log$/, '')));
+        return cachedSummary(id, names);
       } catch (err) {
         return null;
       }
@@ -243,6 +262,22 @@ function validateDispatch(body) {
   return null;
 }
 
+function startTask(body) {
+  const problem = validateDispatch(body);
+  if (problem) throw new Error(problem);
+  return runAgyTask({
+    role: body.role,
+    prompt: body.prompt,
+    workspace: body.workspace,
+    mode: body.mode || 'accept-edits',
+    effort: body.effort || 'high',
+    model: body.model,
+    conversation_id: body.conversation_id,
+    preset: body.preset,
+    account: body.account
+  });
+}
+
 async function dispatch(req, res) {
   let body;
   try {
@@ -250,20 +285,8 @@ async function dispatch(req, res) {
   } catch (err) {
     return sendJson(res, 400, { error: err.message });
   }
-  const problem = validateDispatch(body);
-  if (problem) return sendJson(res, 400, { error: problem });
   try {
-    const { taskId } = runAgyTask({
-      role: body.role,
-      prompt: body.prompt,
-      workspace: body.workspace,
-      mode: body.mode || 'accept-edits',
-      effort: body.effort || 'high',
-      model: body.model,
-      conversation_id: body.conversation_id,
-      preset: body.preset,
-      account: body.account
-    });
+    const { taskId } = startTask(body);
     return sendJson(res, 202, { taskId, status: 'running' });
   } catch (err) {
     return sendJson(res, 400, { error: err.message });
@@ -294,6 +317,69 @@ async function previewPrompt(req, res) {
   } catch (err) {
     return sendJson(res, err.code === 404 ? 404 : 400, { error: err.message });
   }
+}
+
+async function handleTelegram(req, res, method, pathname) {
+  const fail = (err) => sendJson(res, err instanceof telegram.TelegramError ? err.code : err.message === 'Payload too large' || err.message === 'Invalid JSON' ? 400 : 500, { error: err.message });
+
+  if (method === 'GET' && pathname === '/api/telegram/status') {
+    sendJson(res, 200, { status: telegram.getStatus(), commands: telegram.COMMANDS.map(([command, description]) => ({ command, description })) });
+    return true;
+  }
+
+  if (method === 'POST' && pathname === '/api/telegram/test') {
+    try {
+      const body = await readJson(req);
+      sendJson(res, 200, await telegram.test({ token: body.token || undefined, chatId: body.chatId || undefined }));
+    } catch (err) {
+      fail(err);
+    }
+    return true;
+  }
+
+  if (method === 'POST' && pathname === '/api/telegram/discover') {
+    try {
+      const body = await readJson(req);
+      sendJson(res, 200, await telegram.discoverChats({ token: body.token || undefined }));
+    } catch (err) {
+      fail(err);
+    }
+    return true;
+  }
+
+  if (method === 'POST' && pathname === '/api/telegram/send') {
+    try {
+      const body = await readJson(req);
+      sendJson(res, 200, await telegram.notifyUser({ text: body.text, choices: body.choices }));
+    } catch (err) {
+      fail(err);
+    }
+    return true;
+  }
+
+  if (method === 'POST' && pathname === '/api/telegram/inbox/wait') {
+    let body;
+    try {
+      body = await readJson(req);
+    } catch (err) {
+      fail(err);
+      return true;
+    }
+    const seconds = Number(body.timeoutSeconds);
+    const timeoutMs = Math.min(Number.isFinite(seconds) && seconds >= 0 ? seconds : 300, 3600) * 1000;
+    let cancel = null;
+    const gone = () => {
+      if (cancel) cancel();
+    };
+    res.on('close', gone);
+    const messages = await telegram.waitForUser({ timeoutMs, onRegister: (fn) => { cancel = fn; } });
+    if (res.destroyed || res.writableEnded) telegram.requeue(messages);
+    else sendJson(res, 200, { messages, status: telegram.getStatus() });
+    return true;
+  }
+
+  sendJson(res, 404, { error: 'Not found' });
+  return true;
 }
 
 // /api/presets[/:id[/default]]
@@ -355,7 +441,8 @@ function decorateAccount(acc) {
     budget: acc.budget || null,
     limits: acc.limits || null,
     budgetUsed: acc.budget ? getBudgetUsed(acc) : null,
-    avatarUrl: acc.avatarUrl || null
+    avatarUrl: acc.avatarUrl || null,
+    apiKey: acc.apiKey ? { ...acc.apiKey, serviceName: (apiServices.getService(acc.apiKey.service) || { name: acc.apiKey.service }).name } : null
   };
 }
 
@@ -481,7 +568,7 @@ async function handleAccounts(req, res, method, pathname) {
     return true;
   }
 
-  const accountMatch = pathname.match(/^\/api\/accounts(?:\/([\w-]+)(?:\/(check|login|logout|models))?)?$/);
+  const accountMatch = pathname.match(/^\/api\/accounts(?:\/([\w-]+)(?:\/(check|login|logout|models|api-key))?)?$/);
   if (!accountMatch) return false;
   const [, id, action] = accountMatch;
 
@@ -515,7 +602,18 @@ async function handleAccounts(req, res, method, pathname) {
     await run(async () => {
       const body = await readJson(req);
       const account = accounts.createAccount(body);
-      sendJson(res, 201, { account: decorateAccount(account) });
+      const checked = account.apiKey ? await accounts.checkAccount(account.id).catch(() => account) : account;
+      sendJson(res, 201, { account: decorateAccount(checked) });
+    });
+    return true;
+  }
+
+  if (id && action === 'api-key' && method === 'PUT') {
+    await run(async () => {
+      const body = await readJson(req);
+      const account = accounts.setApiKey(id, body);
+      const checked = await accounts.checkAccount(account.id).catch(() => account);
+      sendJson(res, 200, { account: decorateAccount(checked) });
     });
     return true;
   }
@@ -566,6 +664,7 @@ async function handleAccounts(req, res, method, pathname) {
     await run(async () => {
       const account = accounts.getAccount(id);
       if (!account) return sendJson(res, 404, { error: `Account "${id}" not found` });
+      if (account.apiKey) return sendJson(res, 400, { error: 'This account uses an API key. Delete the account, or replace the key with Change key.' });
       if (account.provider === 'agy') {
         return sendJson(res, 400, { error: 'Antigravity has no sign-out command; delete the account to remove its sign-in' });
       }
@@ -715,13 +814,43 @@ async function handleTeamRuns(req, res, method, pathname) {
   return true;
 }
 
-function serveTaskLog(res, id) {
-  const full = path.join(LOGS_DIR, `${id}.log`);
-  if (!fs.existsSync(full)) return sendText(res, 404, 'Not found');
+const LOG_TRUNCATED = '[... earlier output truncated ...]\n';
+
+function completeUtf8End(buf) {
+  for (let back = 1; back <= Math.min(3, buf.length); back++) {
+    const byte = buf[buf.length - back];
+    if ((byte & 0xc0) === 0x80) continue;
+    const need = byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : byte >= 0xc0 ? 2 : 1;
+    return need > back ? buf.length - back : buf.length;
+  }
+  return buf.length;
+}
+
+function readLogChunk(full, from) {
   const size = fs.statSync(full).size;
   const limit = TAIL_BYTES * 5;
-  const body = readTail(full, size > limit ? limit : size);
-  return sendText(res, 200, size > limit ? `[... earlier output truncated ...]\n${body}` : body);
+  const reset = !(Number.isInteger(from) && from >= 0 && from <= size && size - from <= limit);
+  if (!reset && from === size) return { reset: false, next: size, text: '' };
+  const start = reset ? Math.max(0, size - limit) : from;
+  const buf = Buffer.alloc(size - start);
+  const fd = fs.openSync(full, 'r');
+  try {
+    fs.readSync(fd, buf, 0, buf.length, start);
+  } finally {
+    fs.closeSync(fd);
+  }
+  let skip = 0;
+  if (reset && start > 0) while (skip < buf.length && skip < 3 && (buf[skip] & 0xc0) === 0x80) skip++;
+  const end = completeUtf8End(buf);
+  const text = buf.subarray(skip, Math.max(skip, end)).toString('utf-8');
+  return { reset, next: start + Math.max(skip, end), text: reset && start > 0 ? LOG_TRUNCATED + text : text };
+}
+
+function serveTaskLog(res, id, query) {
+  const full = path.join(LOGS_DIR, `${id}.log`);
+  if (!fs.existsSync(full)) return sendText(res, 404, 'Not found');
+  if (query.has('from')) return sendJson(res, 200, readLogChunk(full, Number(query.get('from'))));
+  return sendText(res, 200, readLogChunk(full, -1).text);
 }
 
 function serveStatic(res, pathname, token) {
@@ -759,7 +888,7 @@ function serveStatic(res, pathname, token) {
 const eventClients = new Set();
 let watcherTimer = null;
 let lastTasksStamp = '';
-let lastTasksFingerprint = '';
+let lastTaskPrints = new Map();
 let lastTasksList = [];
 let lastUsageStamp = '';
 let lastTeamsStamp = '';
@@ -801,8 +930,50 @@ function getTasksStamp() {
   }
 }
 
-function getTasksFingerprint(tasks) {
-  return JSON.stringify(tasks.map((t) => (t.status === 'running' ? { ...t, durationMs: null } : t)));
+const PROGRESS_INTERVAL_MS = 5000;
+
+function taskPrints(tasks) {
+  return new Map(tasks.map((t) => [t.id, {
+    state: JSON.stringify(t.status === 'running' ? { ...t, durationMs: null, updatedAt: null, sizeBytes: null } : t),
+    full: JSON.stringify(t.status === 'running' ? { ...t, durationMs: null } : t),
+    sentAt: 0
+  }]));
+}
+
+const logClients = new Set();
+
+function sendLogChunk(client, always = false) {
+  let chunk;
+  try {
+    chunk = readLogChunk(path.join(LOGS_DIR, `${client.id}.log`), client.next);
+  } catch (err) {
+    return;
+  }
+  if (!always && !chunk.reset && !chunk.text) return;
+  client.next = chunk.next;
+  writeClient(client.res, `id: ${chunk.next}\nevent: log\ndata: ${JSON.stringify(chunk)}\n\n`);
+}
+
+function handleLogStream(req, res, id, query) {
+  if (!fs.existsSync(path.join(LOGS_DIR, `${id}.log`))) return sendJson(res, 404, { error: 'Task not found' });
+  if (logClients.size >= 16) return sendJson(res, 503, { error: 'Too many log streams' });
+  const lastEventId = req.headers['last-event-id'];
+  const from = Number(lastEventId !== undefined && lastEventId !== '' ? lastEventId : query.get('from'));
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Content-Type-Options': 'nosniff'
+  });
+  writeClient(res, 'retry: 3000\n\n');
+  const client = { id, res, next: from };
+  sendLogChunk(client, true);
+  logClients.add(client);
+  syncWatcher();
+  res.on('close', () => {
+    logClients.delete(client);
+    syncWatcher();
+  });
 }
 
 function getUsageStamp() {
@@ -850,15 +1021,29 @@ function watcherTick() {
   if (currentTasksStamp !== lastTasksStamp || hasRunning) {
     lastTasksStamp = currentTasksStamp;
     const currentTasks = listTasks();
-    const currentFingerprint = getTasksFingerprint(currentTasks);
-    if (currentFingerprint !== lastTasksFingerprint) {
-      lastTasksFingerprint = currentFingerprint;
-      lastTasksList = currentTasks;
-      broadcastEvent('tasks', { tasks: currentTasks });
-    } else {
-      lastTasksList = currentTasks;
+    const prints = taskPrints(currentTasks);
+    const now = Date.now();
+    const changed = [];
+    const nextPrints = new Map();
+    for (const task of currentTasks) {
+      const before = lastTaskPrints.get(task.id);
+      const next = prints.get(task.id);
+      const progressDue = before && before.full !== next.full && now - before.sentAt >= PROGRESS_INTERVAL_MS;
+      if (!before || before.state !== next.state || progressDue) {
+        changed.push(task);
+        nextPrints.set(task.id, { ...next, sentAt: now });
+      } else {
+        nextPrints.set(task.id, before);
+      }
     }
+    const removed = [...lastTaskPrints.keys()].filter((id) => !prints.has(id));
+    lastTaskPrints = nextPrints;
+    lastTasksList = currentTasks;
+    if (changed.length || removed.length) broadcastEvent('tasks', { tasks: changed, removed, full: false });
+    if (changed.length) telegram.tasksChanged(changed);
   }
+
+  for (const client of logClients) sendLogChunk(client);
 
   const currentUsageStamp = getUsageStamp();
   if (currentUsageStamp !== lastUsageStamp) {
@@ -870,6 +1055,7 @@ function watcherTick() {
   if (currentTeamsStamp !== lastTeamsStamp) {
     lastTeamsStamp = currentTeamsStamp;
     broadcastEvent('teams', {});
+    telegram.runsChanged();
   }
 }
 
@@ -877,7 +1063,7 @@ function startWatcher() {
   if (watcherTimer) return;
   lastTasksStamp = getTasksStamp();
   lastTasksList = listTasks();
-  lastTasksFingerprint = getTasksFingerprint(lastTasksList);
+  lastTaskPrints = taskPrints(lastTasksList);
   lastUsageStamp = getUsageStamp();
   lastTeamsStamp = getTeamsStamp();
   pingTicks = 0;
@@ -891,6 +1077,26 @@ function stopWatcher() {
     watcherTimer = null;
   }
 }
+
+function syncWatcher() {
+  if (eventClients.size > 0 || logClients.size > 0 || telegram.isActive()) startWatcher();
+  else stopWatcher();
+}
+
+telegram.connect({
+  listTasks,
+  startTask,
+  cancelTask,
+  readLogTail: (id, chars) => {
+    const full = path.join(LOGS_DIR, `${id}.log`);
+    return fs.existsSync(full) ? readTail(full, chars + 4).replace(/^\uFFFD+/, '') : '';
+  }
+});
+
+telegram.onStatusChange((status) => {
+  syncWatcher();
+  broadcastEvent('telegram', status);
+});
 
 accountLogin.onLoginChange((evt) => {
   broadcastEvent('login', { id: evt.id, state: evt.state });
@@ -919,23 +1125,19 @@ function handleEvents(req, res) {
     version: updates.versionInfo().current
   };
   writeClient(res, `event: hello\ndata: ${JSON.stringify(helloData)}\n\n`);
-  writeClient(res, `event: tasks\ndata: ${JSON.stringify({ tasks: listTasks() })}\n\n`);
+  writeClient(res, `event: tasks\ndata: ${JSON.stringify({ tasks: listTasks(), removed: [], full: true })}\n\n`);
   writeClient(res, `event: teams\ndata: {}\n\n`);
   writeClient(res, `event: usage\ndata: {}\n\n`);
   updates.checkForUpdate().then((info) => writeClient(res, `event: version\ndata: ${JSON.stringify(info)}\n\n`)).catch(() => {});
 
   const client = { req, res };
   eventClients.add(client);
-  if (eventClients.size === 1) {
-    startWatcher();
-  }
+  syncWatcher();
 
   const cleanup = () => {
     if (!eventClients.has(client)) return;
     eventClients.delete(client);
-    if (eventClients.size === 0) {
-      stopWatcher();
-    }
+    syncWatcher();
   };
 
   req.on('close', cleanup);
@@ -956,6 +1158,28 @@ async function handle(req, res, pathname, { token }) {
   if (method === 'GET' && pathname === '/api/events') {
     handleEvents(req, res);
     return true;
+  }
+
+  if (method === 'GET' && pathname === '/api/settings') {
+    sendJson(res, 200, { settings: settings.describe() });
+    return true;
+  }
+
+  if (method === 'PUT' && pathname === '/api/settings') {
+    try {
+      const body = await readJson(req);
+      const described = settings.update(body && body.values);
+      telegram.reconfigure();
+      broadcastEvent('settings', {});
+      sendJson(res, 200, { settings: described });
+    } catch (err) {
+      sendJson(res, err instanceof settings.SettingsError ? err.code : 400, { error: err.message });
+    }
+    return true;
+  }
+
+  if (pathname.startsWith('/api/telegram/')) {
+    if (await handleTelegram(req, res, method, pathname)) return true;
   }
 
   if (method === 'GET' && pathname === '/api/version') {
@@ -1062,6 +1286,26 @@ async function handle(req, res, pathname, { token }) {
     return true;
   }
 
+  if (method === 'GET' && pathname === '/api/api-services') {
+    sendJson(res, 200, { services: apiServices.listServices() });
+    return true;
+  }
+
+  if (method === 'GET' && pathname === '/api/team-templates') {
+    sendJson(res, 200, { templates: teams.listTeamTemplates() });
+    return true;
+  }
+
+  const templateDraft = pathname.match(/^\/api\/team-templates\/([\w-]+)\/draft$/);
+  if (method === 'GET' && templateDraft) {
+    try {
+      sendJson(res, 200, { team: teams.draftFromTemplate(templateDraft[1]) });
+    } catch (err) {
+      sendJson(res, err instanceof teams.TeamError ? err.code : 500, { error: err.message });
+    }
+    return true;
+  }
+
   if (pathname === '/api/teams' || pathname.startsWith('/api/teams/')) {
     if (await handleTeams(req, res, method, pathname)) return true;
   }
@@ -1070,11 +1314,15 @@ async function handle(req, res, pathname, { token }) {
     if (await handleTeamRuns(req, res, method, pathname)) return true;
   }
 
-  const taskMatch = pathname.match(/^\/api\/tasks\/([\w-]+)(?:\/(log|cancel))?$/);
+  const taskMatch = pathname.match(/^\/api\/tasks\/([\w-]+)(?:\/(log\/stream|log|cancel))?$/);
   if (taskMatch && TASK_ID_PATTERN.test(taskMatch[1])) {
     const [, id, action] = taskMatch;
+    if (method === 'GET' && action === 'log/stream') {
+      handleLogStream(req, res, id, new URL(req.url, 'http://127.0.0.1').searchParams);
+      return true;
+    }
     if (method === 'GET' && action === 'log') {
-      serveTaskLog(res, id);
+      serveTaskLog(res, id, new URL(req.url, 'http://127.0.0.1').searchParams);
       return true;
     }
     if (method === 'GET' && !action) {

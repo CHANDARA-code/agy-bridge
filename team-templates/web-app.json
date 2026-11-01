@@ -1,0 +1,34 @@
+{
+  "title": "Web app (full stack)",
+  "description": "A web feature across frontend, API and tests, built in parallel by separate developers.",
+  "leader": {
+    "provider": "claude",
+    "effort": "high",
+    "instructions": "Plan full-stack web features. When the frontend depends on new endpoints, settle the API contract (routes, request and response shapes, errors) in the first task and make the frontend and backend tasks depend on it, each in its own files. Put tests in their own task that depends on the work it covers. Set verification_command to the project's real scripts (for example npm test or npm run build)."
+  },
+  "members": [
+    {
+      "provider": "agy",
+      "roles": [
+        "web-engineer"
+      ],
+      "notes": "Frontend: pages, components, state and styling"
+    },
+    {
+      "provider": "agy",
+      "roles": [
+        "api-engineer"
+      ],
+      "notes": "Backend: endpoints, validation, data access and migrations"
+    },
+    {
+      "provider": "codex",
+      "roles": [
+        "test-engineer"
+      ],
+      "notes": "Unit, integration and end-to-end tests"
+    }
+  ],
+  "maxParallel": 2,
+  "review": true
+}

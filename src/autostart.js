@@ -82,6 +82,8 @@ ${envEntries}
     </dict>
     <key>ThrottleInterval</key>
     <integer>30</integer>
+    <key>ProcessType</key>
+    <string>Interactive</string>
     <key>StandardOutPath</key>
     <string>${xml(logFiles().out)}</string>
     <key>StandardErrorPath</key>
@@ -205,9 +207,23 @@ function reloadLaunchd(file) {
   return loaded;
 }
 
+function upgradePlist() {
+  const file = plistPath();
+  let content;
+  try {
+    content = fs.readFileSync(file, 'utf-8');
+  } catch (err) {
+    return false;
+  }
+  if (content.includes('<key>ProcessType</key>') || !content.includes('<key>StandardOutPath</key>')) return false;
+  fs.writeFileSync(file, content.replace('    <key>StandardOutPath</key>', '    <key>ProcessType</key>\n    <string>Interactive</string>\n    <key>StandardOutPath</key>'));
+  return true;
+}
+
 // start/stop/restart for "a2a-panel server ..." when the service is installed.
 function start() {
   if (platform() === 'launchd') {
+    if (upgradePlist()) return reloadLaunchd(plistPath());
     const loaded = run('launchctl', ['print', launchdTarget()]).ok;
     return loaded ? run('launchctl', ['kickstart', launchdTarget()]) : run('launchctl', ['bootstrap', launchdDomain(), plistPath()]);
   }
@@ -221,6 +237,7 @@ function stop() {
 function restart() {
   if (platform() === 'launchd') {
     // Reload instead of "kickstart -k": a respawn waits out ThrottleInterval, a fresh bootstrap does not.
+    upgradePlist();
     return reloadLaunchd(plistPath());
   }
   return run('systemctl', ['--user', 'restart', UNIT]);
@@ -233,4 +250,4 @@ function lingerEnabled() {
   return result.ok ? result.output === 'yes' : null;
 }
 
-module.exports = { LABEL, UNIT, platform, servicePath, logFiles, buildPlist, buildUnit, isInstalled, status, enable, disable, start, stop, restart, lingerEnabled };
+module.exports = { LABEL, UNIT, platform, servicePath, logFiles, buildPlist, buildUnit, upgradePlist, isInstalled, status, enable, disable, start, stop, restart, lingerEnabled };

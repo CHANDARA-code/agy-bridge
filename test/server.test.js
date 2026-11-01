@@ -68,7 +68,7 @@ async function startInstance(extraEnv = {}) {
   fs.mkdirSync(workspace);
   fs.writeFileSync(tokenFile, TOKEN + '\n');
   const proc = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
-    env: { ...process.env, A2A_PORT: String(port), A2A_LOGS_DIR: logsDir, A2A_TOKEN_FILE: tokenFile, AGY_BIN: FAKE_AGENT, ...extraEnv },
+    env: { ...process.env, A2A_PORT: String(port), A2A_LOGS_DIR: logsDir, A2A_TOKEN_FILE: tokenFile, A2A_SETTINGS_FILE: path.join(sandbox, 'settings.json'), AGY_BIN: FAKE_AGENT, ...extraEnv },
     stdio: 'ignore'
   });
   const instance = { port, base: `http://127.0.0.1:${port}`, sandbox, logsDir, workspace, proc };

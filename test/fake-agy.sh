@@ -94,6 +94,16 @@ case "$MODE" in
     echo '{"event":"result","result":{"status":"ERROR","response":"","error":"Resource has been exhausted (check quota or rate limit, resets in 1h)","usage":{"total_tokens":5}}}'
     exit 1
     ;;
+  busy)
+    i=0
+    while [ $i -lt "${FAKE_AGY_BUSY_LINES:-600}" ]; do
+      echo '{"event":"step_update","step_update":{"step_index":2,"state":"ACTIVE","step_type":"agent_response","text_delta":"working on the change, reading files and running the tests "}}'
+      sleep 0.05
+      i=$((i+1))
+    done
+    echo '{"event":"result","result":{"status":"SUCCESS","response":"done","usage":{"total_tokens":10}}}'
+    exit 0
+    ;;
   chatty)
     yes 'line of agent output' | head -n 5000
     exit 0

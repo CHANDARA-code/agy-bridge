@@ -63,6 +63,7 @@ async function startInstance(extraEnv = {}) {
       A2A_PORT: String(port),
       A2A_LOGS_DIR: logsDir,
       A2A_TOKEN_FILE: tokenFile,
+      A2A_SETTINGS_FILE: path.join(sandbox, 'settings.json'),
       A2A_PRESETS_DIR: presetsDir,
       A2A_ACCOUNTS_DIR: accountsDir,
       A2A_TEAMS_DIR: teamsDir,
@@ -208,6 +209,7 @@ test('case a: GET /api/events returns 200, text/event-stream, and hello, tasks, 
     assert.strictEqual(evTasks.event, 'tasks');
     assert.ok(Array.isArray(evTasks.data.tasks));
 
+    assert.strictEqual(evTasks.data.full, true);
     const resTasks = await fetch(`${instance.base}/api/tasks`);
     const tasksBody = await resTasks.json();
     const expectedIds = tasksBody.tasks.map((t) => t.id);
@@ -289,6 +291,9 @@ test('case c: POST /api/tasks stream pushes new task then finished task', async 
     while (Date.now() < deadline && !sawFinished) {
       const evt = await sse.nextEvent(5000);
       if (!evt || evt.event !== 'tasks' || !Array.isArray(evt.data.tasks)) continue;
+      assert.strictEqual(evt.data.full, false);
+      assert.deepStrictEqual(evt.data.tasks.map((t) => t.id), [taskId]);
+      assert.deepStrictEqual(evt.data.removed, []);
       const found = evt.data.tasks.find((t) => t.id === taskId);
       if (!found) continue;
       if (found.status === 'running') {

@@ -4,6 +4,31 @@ All notable changes to a2a-panel are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-01
+
+### Added
+
+- Settings page (the gear button in the panel header): time limits, agents at the same time, output kept per task, stop grace period, check command limit, log retention and the update check, saved in `settings.json` in the data folder (mode 0600) and applied to the next task without a restart. An environment variable still wins and shows read-only. `GET /api/settings`, `PUT /api/settings`.
+- Telegram remote control: connect your own bot in Settings with a step-by-step guide (BotFather token, Find my chat, allowed users, test message). Commands `/status`, `/tasks`, `/task`, `/runs`, `/teams`, `/run`, `/team`, `/cancel`, `/usage`, `/do`; messages when a task finishes, a team plan is ready (with Build and Cancel buttons) and a team run ends. Only the chosen chat and allowed users are answered, and starting work from Telegram is off until you turn it on. The server polls Telegram, so no port is opened.
+- MCP tools `a2a_notify_user` and `a2a_wait_for_user`: the team leader (Claude Code, or Antigravity and any other MCP client running `a2a-panel mcp`) can message you on Telegram, with answer buttons, and wait for your reply.
+- API key accounts: add an account with a key from DeepSeek, Kimi (Moonshot AI), Z.ai or Zhipu GLM, MiniMax, Alibaba Cloud Model Studio (Qwen), OpenRouter, Volcengine Ark, Anthropic or any Anthropic-compatible endpoint (runs with Claude Code), or from OpenAI, Kimi, MiniMax, OpenRouter, Groq or any OpenAI Responses-compatible endpoint (runs with Codex). The service list shows each provider's logo (from LobeHub Icons, MIT). Base URL and suggested models are filled in from each provider's guide, the key is checked where the provider offers a free check, and the model picker lists the provider's models. The key stays in the account folder (0600) and is never returned. `GET /api/api-services`, `PUT /api/accounts/:id/api-key`, `a2a-panel accounts services`, `accounts add <id> --service <service>` and `accounts key <id>` (key from stdin or `A2A_API_KEY`).
+- `GET /api/tasks/:id/log?from=<offset>` returns only the log output after that byte offset, and `GET /api/tasks/:id/log/stream` pushes new output as it is written; the task drawer uses the stream.
+- Team templates: web app, iOS, Android, Flutter, backend API, bug fix squad, review and audit, and release preparation. Pick one under Teams → New team or with `a2a-panel teams new <id> --template <template>`; the leader goes to an account of the suggested CLI that leads no other team yet, and each member gets its own signed-in account. `GET /api/team-templates`, `GET /api/team-templates/:id/draft`, `a2a-panel teams templates`.
+
+### Changed
+
+- Faster with many agents running: one process table read per second for all running tasks instead of two `ps` calls per task, task summaries and usage records parsed again only when their files change, the event stream sends only the tasks that changed after the first full list, and an open task's log loads only new output. With 6 agents writing output, the stream sent 62 KB instead of 1 MB in 30 seconds and the task list answered in about 10 ms instead of 50 to 100 ms.
+- With 40 agents running: one `ps` call for a newly started agent instead of a full process table read, no `PATH` search on every liveness check, old-log cleanup at most every 10 minutes, team runs parsed only when their file changes, running tasks whose only change is more output pushed at most every 5 seconds, and only the running durations in the panel update every second instead of the whole list. Measured with 40 agents each printing 20 lines a second: server CPU 2.1 s instead of 3.1 s per 30 seconds, task list 8 ms instead of 25 ms, 136 MB instead of 180 MB, and the panel received 102 KB instead of 425 KB.
+- Settings: "Agents at the same time" goes up to 200; a limit set by an environment variable outside the allowed range is clamped to it instead of being ignored.
+- On macOS the start-at-login service runs as an interactive process (`ProcessType`), so macOS no longer applies background CPU and disk limits to it. `a2a-panel server start` and `restart` update an existing service file.
+- The default limit of agents at the same time is 6 (was 4).
+
+### Fixed
+
+- `npm run check` checks the syntax of the files in `src/` again (it only looked at the top-level entry files since the move).
+- A task that has just finished no longer shows as stale for a moment while its result is written.
+- The header no longer shows a negative uptime ("up -1s") right after the panel connects.
+
 ## [0.3.0] - 2026-10-31
 
 ### Added
@@ -104,7 +129,8 @@ First release on npm.
 - Task logs show each tool call with its argument, failed tool steps, and actions `agy` denied.
 - `GET /tasks/:id` and JSON-RPC `tasks/get` return usage, verification, conversation id and changes for async tasks.
 
-[Unreleased]: https://github.com/CHANDARA-code/a2a-panel/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/CHANDARA-code/a2a-panel/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/CHANDARA-code/a2a-panel/releases/tag/v0.4.0
 [0.3.0]: https://github.com/CHANDARA-code/a2a-panel/releases/tag/v0.3.0
 [0.2.0]: https://github.com/CHANDARA-code/a2a-panel/releases/tag/v0.2.0
 [0.1.0]: https://www.npmjs.com/package/a2a-panel/v/0.1.0

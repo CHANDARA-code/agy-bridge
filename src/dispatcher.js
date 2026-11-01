@@ -2,7 +2,7 @@ const { spawn, execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { resolvePreferences } = require('./presets');
-const { resolveBin, buildCommand, createParser, authFailurePattern, signInPromptPattern } = require('./providers');
+const { MODEL_PATTERN, buildCommand, createParser, authFailurePattern, signInPromptPattern } = require('./providers');
 const { resolveAccount, accountEnv, markSignedOut } = require('./accounts');
 
 const { DATA_DIR, PACKAGE_ROOT } = require('./config');
@@ -41,18 +41,14 @@ function getAgentCard() {
 const activeTasks = new Map();
 
 const TASK_ID_PATTERN = /^a2a_[\w-]+$/;
-const KILL_ESCALATION_MS = parseInt(process.env.A2A_KILL_ESCALATION_MS || '5000', 10);
-
-function envInt(name, fallback) {
-  const value = parseInt(process.env[name], 10);
-  return Number.isFinite(value) && value >= 0 ? value : fallback;
-}
+const settings = require('./settings');
+const killEscalationMs = () => settings.get('A2A_KILL_ESCALATION_MS');
 
 const limits = () => ({
-  wallMs: envInt('A2A_TASK_TIMEOUT_MS', 3600000),
-  idleMs: envInt('A2A_IDLE_TIMEOUT_MS', 0),
-  maxConcurrent: envInt('A2A_MAX_CONCURRENT', 4),
-  maxOutputChars: envInt('A2A_MAX_OUTPUT_CHARS', 200000)
+  wallMs: settings.get('A2A_TASK_TIMEOUT_MS'),
+  idleMs: settings.get('A2A_IDLE_TIMEOUT_MS'),
+  maxConcurrent: settings.get('A2A_MAX_CONCURRENT'),
+  maxOutputChars: settings.get('A2A_MAX_OUTPUT_CHARS')
 });
 
 function cancelMarkerPath(taskId) {
@@ -72,20 +68,89 @@ function startMarkerPath(taskId) {
   return path.join(LOGS_DIR, `${taskId}.start`);
 }
 
-function processCommand(pid) {
+const PROCESS_TABLE_TTL_MS = 1000;
+const PS_ENV = { ...process.env, LC_ALL: 'C' };
+let processTable = { at: 0, rows: new Map() };
+
+function processRows(force = false) {
+  if (!force && Date.now() - processTable.at < PROCESS_TABLE_TTL_MS) return processTable.rows;
+  const rows = new Map();
   try {
-    return execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf-8' }).trim();
+    const out = execFileSync('ps', ['-A', '-o', 'pid=,lstart=,command='], { encoding: 'utf-8', maxBuffer: 16 * 1024 * 1024, env: PS_ENV });
+    for (const line of out.split('\n')) {
+      const match = line.match(/^\s*(\d+)\s+(\S+\s+\S+\s+\d+\s+[\d:]+\s+\d{4})\s+(.*)$/);
+      if (match) rows.set(Number(match[1]), { start: match[2], command: match[3].trim() });
+    }
+  } catch (err) {}
+  processTable = { at: Date.now(), rows };
+  return rows;
+}
+
+function processExists(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === 'EPERM';
+  }
+}
+
+const SINGLE_PROCESS_WINDOW_MS = 250;
+
+function singleProcessRow(id) {
+  try {
+    const out = execFileSync('ps', ['-p', String(id), '-o', 'pid=,lstart=,command='], { encoding: 'utf-8', env: PS_ENV });
+    const match = out.match(/^\s*(\d+)\s+(\S+\s+\S+\s+\d+\s+[\d:]+\s+\d{4})\s+(.*)$/m);
+    if (!match) return null;
+    const row = { start: match[2], command: match[3].trim() };
+    processTable.rows.set(id, row);
+    return row;
+  } catch (err) {
+    return null;
+  }
+}
+
+function processRow(pid) {
+  const id = Number(pid);
+  if (!Number.isInteger(id) || id <= 0 || !processExists(id)) return null;
+  const cached = processRows().get(id);
+  if (cached) return cached;
+  if (Date.now() - processTable.at < SINGLE_PROCESS_WINDOW_MS) return singleProcessRow(id);
+  return processRows(true).get(id) || null;
+}
+
+const sameStart = (a, b) => a.replace(/\s+/g, ' ').trim() === b.replace(/\s+/g, ' ').trim();
+
+function processCommand(pid) {
+  const row = processRow(pid);
+  return row ? row.command : '';
+}
+
+function processStart(pid) {
+  try {
+    return execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf-8', env: PS_ENV }).trim();
   } catch (err) {
     return '';
   }
 }
 
-function processStart(pid) {
+function cachedProcessStart(pid) {
+  const row = processRow(pid);
+  return row ? row.start : '';
+}
+
+function localeProcessStart(pid) {
   try {
     return execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf-8' }).trim();
   } catch (err) {
     return '';
   }
+}
+
+function startMatches(pid, recordedStart) {
+  const current = cachedProcessStart(pid);
+  if (!current) return false;
+  return sameStart(current, recordedStart) || sameStart(localeProcessStart(pid), recordedStart);
 }
 
 function readTaskStart(taskId) {
@@ -106,11 +171,7 @@ function isGroupAlive(pid) {
 }
 
 function commandRunsAgent(command) {
-  const bins = [
-    resolveBin('agy'),
-    resolveBin('claude'),
-    resolveBin('codex')
-  ];
+  const bins = ['agy', 'claude', 'codex'];
   if (process.env.AGY_BIN) bins.push(process.env.AGY_BIN);
   if (process.env.CLAUDE_BIN) bins.push(process.env.CLAUDE_BIN);
   if (process.env.CODEX_BIN) bins.push(process.env.CODEX_BIN);
@@ -125,13 +186,13 @@ function verifyMarkerPath(taskId) {
 function isTaskProcessLive(taskId, pid) {
   if (fs.existsSync(verifyMarkerPath(taskId))) {
     const recordedStart = readTaskStart(taskId);
-    if (recordedStart && processStart(pid) !== recordedStart) return false;
+    if (recordedStart && !startMatches(pid, recordedStart)) return false;
     return isGroupAlive(pid);
   }
   const command = processCommand(pid);
   if (command) {
     const recordedStart = readTaskStart(taskId);
-    if (recordedStart && processStart(pid) !== recordedStart) return false;
+    if (recordedStart && !startMatches(pid, recordedStart)) return false;
     return commandRunsAgent(command);
   }
   return isGroupAlive(pid);
@@ -204,15 +265,19 @@ function cancelTask(taskId) {
         signalTaskTree(pid, 'SIGKILL');
       } catch (err) {}
     }
-  }, KILL_ESCALATION_MS).unref();
+  }, killEscalationMs()).unref();
   return { ok: true, code: 200, id: taskId, status: 'cancelled' };
 }
 
 const RETENTION_FILE_PATTERN = /^(a2a_[\w-]+)\.(log|cancelled)$/;
 
+const PRUNE_INTERVAL_MS = 10 * 60 * 1000;
+let lastPruneAt = 0;
+
 function pruneOldLogs() {
-  const days = envInt('A2A_LOG_RETENTION_DAYS', 14);
-  if (days <= 0) return;
+  const days = settings.get('A2A_LOG_RETENTION_DAYS');
+  if (days <= 0 || Date.now() - lastPruneAt < PRUNE_INTERVAL_MS) return;
+  lastPruneAt = Date.now();
   const cutoff = Date.now() - days * 86400000;
   let files = [];
   try {
@@ -223,11 +288,12 @@ function pruneOldLogs() {
   for (const file of files) {
     const match = RETENTION_FILE_PATTERN.exec(file);
     if (!match) continue;
-    const pid = readTaskPid(match[1]);
-    if (pid && isTaskProcessLive(match[1], pid)) continue;
     try {
       const full = path.join(LOGS_DIR, file);
-      if (fs.statSync(full).mtimeMs < cutoff) fs.unlinkSync(full);
+      if (fs.statSync(full).mtimeMs >= cutoff) continue;
+      const pid = readTaskPid(match[1]);
+      if (pid && isTaskProcessLive(match[1], pid)) continue;
+      fs.unlinkSync(full);
     } catch (err) {}
   }
 }
@@ -277,14 +343,13 @@ function loadRolePersona(role) {
 
 const USAGE_LOG = path.join(LOGS_DIR, 'usage.jsonl');
 const CONVERSATION_ID_PATTERN = /^[A-Za-z0-9][\w-]{7,63}$/;
-const MODEL_PATTERN = /^[A-Za-z0-9][\w.:-]{0,63}$/;
 const TASK_MODES = ['accept-edits', 'plan', 'auto'];
 const TASK_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const CHANGES_LIMIT = 2000;
 const VERIFY_OUTPUT_LIMIT = 4000;
 
 function runVerification(command, cwd, logStream, taskId) {
-  const timeoutMs = envInt('A2A_VERIFY_TIMEOUT_MS', 600000);
+  const timeoutMs = settings.get('A2A_VERIFY_TIMEOUT_MS');
   const startedAt = Date.now();
   logStream.write(`\n=== VERIFICATION (run by a2a-panel, not the agent): ${command} ===\n`);
   return new Promise((resolve) => {
@@ -330,7 +395,7 @@ function runVerification(command, cwd, logStream, taskId) {
           try {
             signalTaskTree(child.pid, 'SIGKILL');
           } catch (err) {}
-        }, KILL_ESCALATION_MS));
+        }, killEscalationMs()));
       }, timeoutMs));
     }
   });
@@ -470,7 +535,7 @@ function runAgyTask({ role, prompt, workspace, mode = 'accept-edits', effort = '
   if (maxConcurrent > 0) {
     const running = countRunningTasks();
     if (running >= maxConcurrent) {
-      throw new Error(`Concurrency limit reached: ${running} of ${maxConcurrent} agent tasks are running. Wait for one to finish or cancel one (limit set by A2A_MAX_CONCURRENT).`);
+      throw new Error(`Concurrency limit reached: ${running} of ${maxConcurrent} agent tasks are running. Wait for one to finish or cancel one (change it under Settings, or with A2A_MAX_CONCURRENT).`);
     }
   }
   const taskId = 'a2a_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
@@ -603,7 +668,7 @@ function runAgyTask({ role, prompt, workspace, mode = 'accept-edits', effort = '
       try {
         signalTaskTree(proc.pid, 'SIGKILL');
       } catch (err) {}
-    }, KILL_ESCALATION_MS);
+    }, killEscalationMs());
     escalation.unref();
     timers.push(escalation);
   };
@@ -725,10 +790,15 @@ function runAgyTask({ role, prompt, workspace, mode = 'accept-edits', effort = '
       const authPattern = authFailurePattern(provider);
       const failureText = `${taskRecord.agentError || ''}\n${stderrTail}`;
       if (signInDetected || authPattern.test(failureText)) {
-        markSignedOut(resolvedAcc.id, 'Authentication failed during task');
         const match = failureText.match(authPattern);
         const detail = match ? match[0] : 'sign-in required';
-        taskRecord.error = `Account ${resolvedAcc.id} is not signed in (${detail}). Sign in again from the panel (Accounts) or with "a2a-panel accounts login ${resolvedAcc.id}".`;
+        if (resolvedAcc.apiKey) {
+          markSignedOut(resolvedAcc.id, 'The provider rejected the API key during a task. Replace it with Change key.');
+          taskRecord.error = `The API key of account ${resolvedAcc.id} was rejected (${detail}). Replace it in the panel (Accounts, Change key) or with "a2a-panel accounts key ${resolvedAcc.id}".`;
+        } else {
+          markSignedOut(resolvedAcc.id, 'Authentication failed during task');
+          taskRecord.error = `Account ${resolvedAcc.id} is not signed in (${detail}). Sign in again from the panel (Accounts) or with "a2a-panel accounts login ${resolvedAcc.id}".`;
+        }
         logStream.write(`\n[A2A] Marked failed: ${taskRecord.error}\n`);
       }
     }

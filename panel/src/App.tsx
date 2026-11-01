@@ -16,7 +16,7 @@ import {
   Typography,
   theme,
 } from "antd";
-import { CloudDownloadOutlined, MoonOutlined, PlusOutlined, ReloadOutlined, SunOutlined, ThunderboltOutlined } from "@ant-design/icons";
+import { CloudDownloadOutlined, MoonOutlined, PlusOutlined, ReloadOutlined, SettingOutlined, SunOutlined, ThunderboltOutlined } from "@ant-design/icons";
 import { api } from "./api";
 import type { DispatchInput, Task, VersionInfo } from "./api";
 import { formatUptime } from "./format";
@@ -28,18 +28,20 @@ import { TaskList } from "./components/TaskList";
 import { UpdateModal } from "./components/UpdateModal";
 
 type Filter = "all" | "running" | "completed" | "failed" | "cancelled" | "stale";
-type View = "tasks" | "teams" | "accounts" | "usage" | "presets";
+type View = "tasks" | "teams" | "accounts" | "usage" | "presets" | "settings";
 
 const PresetsView = lazy(() => import("./components/PresetsView").then((m) => ({ default: m.PresetsView })));
 const AccountsView = lazy(() => import("./components/AccountsView").then((m) => ({ default: m.AccountsView })));
 const TeamsView = lazy(() => import("./components/TeamsView").then((m) => ({ default: m.TeamsView })));
 const UsageView = lazy(() => import("./components/UsageView").then((m) => ({ default: m.UsageView })));
+const SettingsView = lazy(() => import("./components/SettingsView").then((m) => ({ default: m.SettingsView })));
 
 const viewFromHash = (): View => {
   if (window.location.hash === "#teams") return "teams";
   if (window.location.hash === "#accounts") return "accounts";
   if (window.location.hash === "#usage") return "usage";
   if (window.location.hash === "#presets") return "presets";
+  if (window.location.hash === "#settings") return "settings";
   return "tasks";
 };
 
@@ -66,7 +68,6 @@ function Panel() {
   const [tasksLoading, setTasksLoading] = useState(true);
   const [serverStartedAtMs, setServerStartedAtMs] = useState<number | null>(null);
   const [uptimeNow, setUptimeNow] = useState(() => Date.now());
-  const [durationNow, setDurationNow] = useState(() => Date.now());
 
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
   const [updateOpen, setUpdateOpen] = useState(false);
@@ -90,11 +91,19 @@ function Panel() {
   const updating = versionInfo?.update.state === "installing" || versionInfo?.update.state === "restarting";
   const showUpdate = Boolean(versionInfo && (versionInfo.updateAvailable || updating || versionInfo.update.state === "installed"));
 
-  useServerEvent("tasks", (data: { tasks: Task[] }) => {
-    if (Array.isArray(data?.tasks)) {
+  useServerEvent("tasks", (data: { tasks: Task[]; removed?: string[]; full?: boolean }) => {
+    if (!Array.isArray(data?.tasks)) return;
+    if (data.full !== false) {
       setRawTasks(data.tasks);
-      setTasksLoading(false);
+    } else {
+      const changed = new Map(data.tasks.map((task) => [task.id, task]));
+      const removed = new Set(data.removed ?? []);
+      setRawTasks((current) => {
+        const kept = (current ?? []).filter((task) => !removed.has(task.id) && !changed.has(task.id));
+        return [...data.tasks, ...kept].sort((a, b) => String(b.startedAt ?? "").localeCompare(String(a.startedAt ?? "")));
+      });
     }
+    setTasksLoading(false);
   });
 
   const refreshTasks = useCallback(async () => {
@@ -111,16 +120,6 @@ function Panel() {
     }, 30000);
     return () => clearInterval(timer);
   }, []);
-
-  const hasRunning = (rawTasks ?? []).some((task) => task.status === "running");
-
-  useEffect(() => {
-    if (!hasRunning) return;
-    const timer = setInterval(() => {
-      setDurationNow(Date.now());
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [hasRunning]);
 
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
@@ -156,19 +155,7 @@ function Panel() {
     />
   );
 
-  const all = useMemo(() => {
-    if (!rawTasks) return [];
-    return rawTasks.map((task) => {
-      if (task.status === "running") {
-        const startMs = Date.parse(task.startedAt);
-        return {
-          ...task,
-          durationMs: Number.isNaN(startMs) ? null : Math.max(0, durationNow - startMs),
-        };
-      }
-      return task;
-    });
-  }, [rawTasks, durationNow]);
+  const all = useMemo(() => rawTasks ?? [], [rawTasks]);
 
   const counts = useMemo(() => {
     const result = { running: 0, completed: 0, failed: 0, cancelled: 0, stale: 0 };
@@ -233,7 +220,7 @@ function Panel() {
     { key: "all" as const, title: "Total", value: all.length, color: token.colorText },
   ];
 
-  const uptimeText = serverStartedAtMs !== null ? formatUptime(Math.floor((uptimeNow - serverStartedAtMs) / 1000)) : "";
+  const uptimeText = serverStartedAtMs !== null ? formatUptime(Math.max(0, Math.floor((uptimeNow - serverStartedAtMs) / 1000))) : "";
 
   return (
     <Layout style={{ minHeight: "100dvh" }}>
@@ -276,6 +263,14 @@ function Panel() {
             </Button>
           )}
           <Button
+            aria-label="Settings"
+            title="Settings"
+            type={view === "settings" ? "primary" : "default"}
+            ghost={view === "settings"}
+            icon={<SettingOutlined />}
+            onClick={() => changeView("settings")}
+          />
+          <Button
             aria-label={mode === "dark" ? "Switch to light theme" : "Switch to dark theme"}
             icon={mode === "dark" ? <SunOutlined /> : <MoonOutlined />}
             onClick={toggleTheme}
@@ -308,6 +303,12 @@ function Panel() {
           {view === "accounts" && (
             <Suspense fallback={<Skeleton active />}>
               <AccountsView isMobile={isMobile} />
+            </Suspense>
+          )}
+
+          {view === "settings" && (
+            <Suspense fallback={<Skeleton active />}>
+              <SettingsView isMobile={isMobile} />
             </Suspense>
           )}
 
