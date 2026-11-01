@@ -218,7 +218,7 @@ function Panel() {
     { key: "all" as const, title: "Total", value: all.length, color: token.colorText },
   ];
 
-  const uptimeText = serverStartedAtMs !== null ? formatUptime(Math.floor((uptimeNow - serverStartedAtMs) / 1000)) : "";
+  const uptimeText = serverStartedAtMs !== null ? formatUptime(Math.max(0, Math.floor((uptimeNow - serverStartedAtMs) / 1000))) : "";
 
   return (
     <Layout style={{ minHeight: "100dvh" }}>
