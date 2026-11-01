@@ -15,6 +15,15 @@ const DEFINITIONS = [
   { key: 'A2A_UPDATE_CHECK', group: 'updates', type: 'bool', default: true, label: 'Check for updates', help: 'Asks the npm registry for a newer version at most every 6 hours and shows the Update button.' },
   { key: 'A2A_NPM_REGISTRY', group: 'updates', type: 'url', default: 'https://registry.npmjs.org', label: 'npm registry', help: 'Registry the update check asks.' },
   { key: 'A2A_NPM_BIN', group: 'updates', type: 'path', default: '', label: 'npm command', help: 'npm used to install an update. Empty uses the npm next to Node.js.' },
+  { key: 'A2A_TELEGRAM_ENABLED', group: 'telegram', type: 'bool', default: false, label: 'Telegram remote control', help: 'Listen for commands from your Telegram chat and send notifications there.' },
+  { key: 'A2A_TELEGRAM_BOT_TOKEN', group: 'telegram', type: 'secret', default: '', label: 'Bot token', help: 'From @BotFather. Stored only in settings.json in your data folder, readable only by you.' },
+  { key: 'A2A_TELEGRAM_CHAT_ID', group: 'telegram', type: 'chat', default: '', label: 'Chat id', help: 'The only chat the bot listens to and writes to.' },
+  { key: 'A2A_TELEGRAM_ALLOWED_USER_IDS', group: 'telegram', type: 'idlist', default: '', label: 'Allowed user ids', help: 'Comma-separated Telegram user ids allowed to send commands and messages. Empty works only for a private chat with the bot; a group chat needs the ids.' },
+  { key: 'A2A_TELEGRAM_ALLOW_RUN', group: 'telegram', type: 'bool', default: false, label: 'Allow starting work from Telegram', help: 'Lets /run, /team and the Build button start agents. Messages for your team leader are delivered either way, and the leader decides what to do with them.' },
+  { key: 'A2A_TELEGRAM_WORKSPACE', group: 'telegram', type: 'path', default: '', label: 'Workspace for /run', help: 'Absolute path of the project that /run and /team work in, unless a team has its own workspace.' },
+  { key: 'A2A_TELEGRAM_NOTIFY_TASKS', group: 'telegram', type: 'bool', default: true, label: 'Tell me when tasks finish', help: 'A message when a task completes, fails or is cancelled.' },
+  { key: 'A2A_TELEGRAM_NOTIFY_RUNS', group: 'telegram', type: 'bool', default: true, label: 'Tell me about team runs', help: 'A message with Build and Cancel buttons when a plan is ready, and one when a run ends.' },
+  { key: 'A2A_TELEGRAM_API', group: 'hidden', type: 'url', default: 'https://api.telegram.org', label: 'Telegram API', help: 'Telegram Bot API base URL.' }
 ];
 
 const BY_KEY = new Map(DEFINITIONS.map((definition) => [definition.key, definition]));

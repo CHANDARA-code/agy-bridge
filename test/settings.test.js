@@ -120,6 +120,8 @@ test('bad settings are refused and nothing is written', async () => {
     [{ A2A_MAX_CONCURRENT: 999 }, 400, /at most 200/],
     [{ A2A_NPM_REGISTRY: 'ftp://x' }, 400, /http/],
     [{ A2A_NPM_BIN: 'npm' }, 400, /absolute path/],
+    [{ A2A_TELEGRAM_BOT_TOKEN: 'not-a-token' }, 400, /bot token/],
+    [{ A2A_TELEGRAM_CHAT_ID: 'abc' }, 400, /number/],
     [{ A2A_NOPE: 1 }, 400, /Unknown setting/],
     [{ A2A_TELEGRAM_API: 'https://evil.example.com' }, 400, /Unknown setting/],
     [{ A2A_KILL_ESCALATION_MS: 1000 }, 409, /environment variable/]
@@ -131,6 +133,18 @@ test('bad settings are refused and nothing is written', async () => {
   }
   assert.strictEqual((await put(instance, { A2A_MAX_CONCURRENT: 2 }, { 'Content-Type': 'application/json' })).status, 401);
   assert.strictEqual(fs.existsSync(path.join(instance.sandbox, 'settings.json')), false);
+});
+
+test('a bot token is stored but never sent back', async () => {
+  const instance = await startInstance();
+  const token = '123456789:AAH' + 'x'.repeat(32);
+  assert.strictEqual((await put(instance, { A2A_TELEGRAM_BOT_TOKEN: token })).status, 200);
+  const raw = await (await fetch(`${instance.base}/api/settings`)).text();
+  assert.ok(!raw.includes(token));
+  const entry = JSON.parse(raw).settings.find((s) => s.key === 'A2A_TELEGRAM_BOT_TOKEN');
+  assert.strictEqual(entry.isSet, true);
+  assert.strictEqual(entry.value, '');
+  assert.ok(!(await (await fetch(`${instance.base}/api/telegram/status`)).text()).includes(token));
 });
 
 test('a new agent limit applies to the next task without a restart', async () => {

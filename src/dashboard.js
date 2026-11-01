@@ -11,6 +11,7 @@ const { findProviderIcon } = require('./provider-icons');
 const { PACKAGE_ROOT } = require('./config');
 const updates = require('./updates');
 const settings = require('./settings');
+const telegram = require('./telegram');
 
 const BASE_PATH = '/dashboard';
 const DIST_DIR = path.join(PACKAGE_ROOT, 'panel', 'dist');
@@ -260,6 +261,22 @@ function validateDispatch(body) {
   return null;
 }
 
+function startTask(body) {
+  const problem = validateDispatch(body);
+  if (problem) throw new Error(problem);
+  return runAgyTask({
+    role: body.role,
+    prompt: body.prompt,
+    workspace: body.workspace,
+    mode: body.mode || 'accept-edits',
+    effort: body.effort || 'high',
+    model: body.model,
+    conversation_id: body.conversation_id,
+    preset: body.preset,
+    account: body.account
+  });
+}
+
 async function dispatch(req, res) {
   let body;
   try {
@@ -267,20 +284,8 @@ async function dispatch(req, res) {
   } catch (err) {
     return sendJson(res, 400, { error: err.message });
   }
-  const problem = validateDispatch(body);
-  if (problem) return sendJson(res, 400, { error: problem });
   try {
-    const { taskId } = runAgyTask({
-      role: body.role,
-      prompt: body.prompt,
-      workspace: body.workspace,
-      mode: body.mode || 'accept-edits',
-      effort: body.effort || 'high',
-      model: body.model,
-      conversation_id: body.conversation_id,
-      preset: body.preset,
-      account: body.account
-    });
+    const { taskId } = startTask(body);
     return sendJson(res, 202, { taskId, status: 'running' });
   } catch (err) {
     return sendJson(res, 400, { error: err.message });
@@ -311,6 +316,69 @@ async function previewPrompt(req, res) {
   } catch (err) {
     return sendJson(res, err.code === 404 ? 404 : 400, { error: err.message });
   }
+}
+
+async function handleTelegram(req, res, method, pathname) {
+  const fail = (err) => sendJson(res, err instanceof telegram.TelegramError ? err.code : err.message === 'Payload too large' || err.message === 'Invalid JSON' ? 400 : 500, { error: err.message });
+
+  if (method === 'GET' && pathname === '/api/telegram/status') {
+    sendJson(res, 200, { status: telegram.getStatus(), commands: telegram.COMMANDS.map(([command, description]) => ({ command, description })) });
+    return true;
+  }
+
+  if (method === 'POST' && pathname === '/api/telegram/test') {
+    try {
+      const body = await readJson(req);
+      sendJson(res, 200, await telegram.test({ token: body.token || undefined, chatId: body.chatId || undefined }));
+    } catch (err) {
+      fail(err);
+    }
+    return true;
+  }
+
+  if (method === 'POST' && pathname === '/api/telegram/discover') {
+    try {
+      const body = await readJson(req);
+      sendJson(res, 200, await telegram.discoverChats({ token: body.token || undefined }));
+    } catch (err) {
+      fail(err);
+    }
+    return true;
+  }
+
+  if (method === 'POST' && pathname === '/api/telegram/send') {
+    try {
+      const body = await readJson(req);
+      sendJson(res, 200, await telegram.notifyUser({ text: body.text, choices: body.choices }));
+    } catch (err) {
+      fail(err);
+    }
+    return true;
+  }
+
+  if (method === 'POST' && pathname === '/api/telegram/inbox/wait') {
+    let body;
+    try {
+      body = await readJson(req);
+    } catch (err) {
+      fail(err);
+      return true;
+    }
+    const seconds = Number(body.timeoutSeconds);
+    const timeoutMs = Math.min(Number.isFinite(seconds) && seconds >= 0 ? seconds : 300, 3600) * 1000;
+    let cancel = null;
+    const gone = () => {
+      if (cancel) cancel();
+    };
+    res.on('close', gone);
+    const messages = await telegram.waitForUser({ timeoutMs, onRegister: (fn) => { cancel = fn; } });
+    if (res.destroyed || res.writableEnded) telegram.requeue(messages);
+    else sendJson(res, 200, { messages, status: telegram.getStatus() });
+    return true;
+  }
+
+  sendJson(res, 404, { error: 'Not found' });
+  return true;
 }
 
 // /api/presets[/:id[/default]]
@@ -958,6 +1026,7 @@ function watcherTick() {
     lastTaskPrints = nextPrints;
     lastTasksList = currentTasks;
     if (changed.length || removed.length) broadcastEvent('tasks', { tasks: changed, removed, full: false });
+    if (changed.length) telegram.tasksChanged(changed);
   }
 
   for (const client of logClients) sendLogChunk(client);
@@ -972,6 +1041,7 @@ function watcherTick() {
   if (currentTeamsStamp !== lastTeamsStamp) {
     lastTeamsStamp = currentTeamsStamp;
     broadcastEvent('teams', {});
+    telegram.runsChanged();
   }
 }
 
@@ -995,9 +1065,24 @@ function stopWatcher() {
 }
 
 function syncWatcher() {
-  if (eventClients.size > 0 || logClients.size > 0) startWatcher();
+  if (eventClients.size > 0 || logClients.size > 0 || telegram.isActive()) startWatcher();
   else stopWatcher();
 }
+
+telegram.connect({
+  listTasks,
+  startTask,
+  cancelTask,
+  readLogTail: (id, chars) => {
+    const full = path.join(LOGS_DIR, `${id}.log`);
+    return fs.existsSync(full) ? readTail(full, chars + 4).replace(/^\uFFFD+/, '') : '';
+  }
+});
+
+telegram.onStatusChange((status) => {
+  syncWatcher();
+  broadcastEvent('telegram', status);
+});
 
 accountLogin.onLoginChange((evt) => {
   broadcastEvent('login', { id: evt.id, state: evt.state });
@@ -1070,12 +1155,17 @@ async function handle(req, res, pathname, { token }) {
     try {
       const body = await readJson(req);
       const described = settings.update(body && body.values);
+      telegram.reconfigure();
       broadcastEvent('settings', {});
       sendJson(res, 200, { settings: described });
     } catch (err) {
       sendJson(res, err instanceof settings.SettingsError ? err.code : 400, { error: err.message });
     }
     return true;
+  }
+
+  if (pathname.startsWith('/api/telegram/')) {
+    if (await handleTelegram(req, res, method, pathname)) return true;
   }
 
   if (method === 'GET' && pathname === '/api/version') {

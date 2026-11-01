@@ -457,6 +457,25 @@ export interface SettingEntry {
   source: SettingSource;
 }
 
+export type TelegramState = "off" | "incomplete" | "starting" | "listening" | "retrying" | "error";
+
+export interface TelegramStatus {
+  state: TelegramState;
+  bot: string | null;
+  lastError: string | null;
+  since: string | null;
+  ignored: number;
+  inbox: number;
+  waiting: number;
+}
+
+export interface TelegramChat {
+  id: string;
+  type: string;
+  title: string;
+  users: { id: string; name: string }[];
+}
+
 export interface LogChunk {
   text: string;
   next: number;
@@ -496,6 +515,11 @@ export const api = {
   settings: () => request<{ settings: SettingEntry[] }>("/api/settings").then((r) => r.settings),
   saveSettings: (values: Record<string, SettingValue | null>) =>
     request<{ settings: SettingEntry[] }>("/api/settings", { method: "PUT", body: JSON.stringify({ values }) }).then((r) => r.settings),
+  telegramStatus: () => request<{ status: TelegramStatus }>("/api/telegram/status").then((r) => r.status),
+  telegramTest: (input: { token?: string; chatId?: string }) =>
+    request<{ bot: string; sent: boolean }>("/api/telegram/test", { method: "POST", body: JSON.stringify(input) }),
+  telegramDiscover: (token?: string) =>
+    request<{ bot: string; chats: TelegramChat[] }>("/api/telegram/discover", { method: "POST", body: JSON.stringify({ token }) }),
   dispatch: (input: DispatchInput) =>
     request<{ taskId: string }>("/api/tasks", { method: "POST", body: JSON.stringify(input) }),
   cancel: (id: string) => request<{ id: string; status: string }>(`/api/tasks/${id}/cancel`, { method: "POST" }),

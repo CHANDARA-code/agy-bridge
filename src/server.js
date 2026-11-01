@@ -491,6 +491,7 @@ function startServer() {
     });
   }
   server.listen(PORT, HOST, () => {
+    require('./telegram').reconfigure();
     console.log(`[A2A Protocol Server] Listening on http://${HOST}:${PORT}`);
     console.log(`[A2A Protocol Server] Agent Card: http://${HOST}:${PORT}/.well-known/agent-card.json`);
     console.log(`[A2A Protocol Server] JSON-RPC Endpoint: http://${HOST}:${PORT}/rpc`);

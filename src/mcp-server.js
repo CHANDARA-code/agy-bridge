@@ -25,6 +25,31 @@ function tailForLeader(taskRecord) {
   return `[output truncated to last ${LEADER_OUTPUT_LIMIT} of ${taskRecord.outputChars || out.length} chars; full log: ${taskRecord.logFile}]\n` + out.slice(-LEADER_OUTPUT_LIMIT);
 }
 
+const WAIT_STEP_SECONDS = 240;
+
+async function serverRequest(pathname, body, timeoutMs) {
+  const { TOKEN_FILE } = require('./security');
+  let token = '';
+  try {
+    token = fs.readFileSync(TOKEN_FILE, 'utf-8').trim();
+  } catch (err) {}
+  const port = parseInt(process.env.A2A_PORT || '5188', 10);
+  let res;
+  try {
+    res = await fetch(`http://127.0.0.1:${port}${pathname}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-A2A-Token': token },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs)
+    });
+  } catch (err) {
+    throw new Error(`the a2a-panel server is not reachable on port ${port}; start it with "a2a-panel server start"`);
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `the server answered ${res.status}`);
+  return data;
+}
+
 function formatUsage(usage, accountId, providerName) {
   if (!usage) return null;
   const parts = [`${usage.total_tokens ?? 0} total`];
@@ -367,6 +392,38 @@ const TOOLS = [
     }
   },
   {
+    name: 'a2a_notify_user',
+    description: 'Send a message to the user on Telegram (set up in the a2a-panel under Settings). Use it for progress, results, or a question; pass choices to show answer buttons. Replies and button taps arrive through a2a_wait_for_user.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: {
+          type: 'string',
+          description: 'Plain text to send, up to 12000 characters.'
+        },
+        choices: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional answer buttons, up to 6 short labels. The tapped label comes back from a2a_wait_for_user.'
+        }
+      },
+      required: ['text']
+    }
+  },
+  {
+    name: 'a2a_wait_for_user',
+    description: 'Wait for the user\'s next instructions from Telegram: free text, /do messages and taps on a2a_notify_user buttons, oldest first. Returns as soon as something arrives, or with no messages at the timeout. Call it when you need the user\'s answer or when idle, to take remote instructions.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        timeout_seconds: {
+          type: 'number',
+          description: 'How long to wait, 0 to 3600 seconds. Default 300; 0 only collects what is already waiting.'
+        }
+      }
+    }
+  },
+  {
     name: 'a2a_account_usage',
     description: 'Show token usage, quota windows, and budget room across configured accounts so a leader can pick an account with capacity.',
     inputSchema: {
@@ -467,6 +524,26 @@ rl.on('line', async (line) => {
             text: lines.join('\n')
           }]
         });
+      }
+
+      if (toolName === 'a2a_notify_user') {
+        await serverRequest('/api/telegram/send', { text: args.text, choices: args.choices }, 30000);
+        return sendRpcResponse(id, { content: [{ type: 'text', text: 'Sent to the user on Telegram.' }] });
+      }
+
+      if (toolName === 'a2a_wait_for_user') {
+        const requested = Number(args.timeout_seconds);
+        const seconds = Math.min(Number.isFinite(requested) && requested >= 0 ? requested : 300, 3600);
+        const deadline = Date.now() + seconds * 1000;
+        let messages = [];
+        do {
+          const step = Math.min(WAIT_STEP_SECONDS, Math.max(0, Math.ceil((deadline - Date.now()) / 1000)));
+          ({ messages } = await serverRequest('/api/telegram/inbox/wait', { timeoutSeconds: step }, (step + 30) * 1000));
+        } while (!messages.length && Date.now() < deadline - 500);
+        const text = messages.length
+          ? messages.map((m) => `[${m.at}] ${m.kind === 'button' ? 'tapped' : 'wrote'}${m.from ? ` (${m.from})` : ''}: ${m.text}`).join('\n')
+          : `No message from the user in ${seconds} seconds.`;
+        return sendRpcResponse(id, { content: [{ type: 'text', text }] });
       }
 
       if (toolName === 'a2a_account_usage') {

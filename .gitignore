@@ -11,3 +11,5 @@ presets/
 accounts/
 teams/
 settings.json
+telegram-state.json
+telegram-inbox.json
