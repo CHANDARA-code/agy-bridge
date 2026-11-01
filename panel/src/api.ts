@@ -439,6 +439,24 @@ export interface AccountModels {
   error: string | null;
 }
 
+export type SettingSource = "env" | "file" | "default";
+export type SettingValue = number | boolean | string;
+
+export interface SettingEntry {
+  key: string;
+  group: "limits" | "updates" | "telegram";
+  type: "int" | "bool" | "url" | "path" | "secret" | "chat" | "idlist";
+  label: string;
+  help: string;
+  unit: string | null;
+  min?: number;
+  max?: number;
+  default: SettingValue;
+  value: SettingValue;
+  isSet?: boolean;
+  source: SettingSource;
+}
+
 export interface LogChunk {
   text: string;
   next: number;
@@ -475,6 +493,9 @@ export const api = {
   tasks: () => request<{ tasks: Task[] }>("/api/tasks").then((r) => r.tasks),
   task: (id: string) => request<{ task: Task }>(`/api/tasks/${id}`).then((r) => r.task),
   log: (id: string) => request<string>(`/api/tasks/${id}/log`, {}, "text"),
+  settings: () => request<{ settings: SettingEntry[] }>("/api/settings").then((r) => r.settings),
+  saveSettings: (values: Record<string, SettingValue | null>) =>
+    request<{ settings: SettingEntry[] }>("/api/settings", { method: "PUT", body: JSON.stringify({ values }) }).then((r) => r.settings),
   dispatch: (input: DispatchInput) =>
     request<{ taskId: string }>("/api/tasks", { method: "POST", body: JSON.stringify(input) }),
   cancel: (id: string) => request<{ id: string; status: string }>(`/api/tasks/${id}/cancel`, { method: "POST" }),

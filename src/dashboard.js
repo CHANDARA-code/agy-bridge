@@ -10,6 +10,7 @@ const teams = require('./teams');
 const { findProviderIcon } = require('./provider-icons');
 const { PACKAGE_ROOT } = require('./config');
 const updates = require('./updates');
+const settings = require('./settings');
 
 const BASE_PATH = '/dashboard';
 const DIST_DIR = path.join(PACKAGE_ROOT, 'panel', 'dist');
@@ -1057,6 +1058,23 @@ async function handle(req, res, pathname, { token }) {
 
   if (method === 'GET' && pathname === '/api/events') {
     handleEvents(req, res);
+    return true;
+  }
+
+  if (method === 'GET' && pathname === '/api/settings') {
+    sendJson(res, 200, { settings: settings.describe() });
+    return true;
+  }
+
+  if (method === 'PUT' && pathname === '/api/settings') {
+    try {
+      const body = await readJson(req);
+      const described = settings.update(body && body.values);
+      broadcastEvent('settings', {});
+      sendJson(res, 200, { settings: described });
+    } catch (err) {
+      sendJson(res, err instanceof settings.SettingsError ? err.code : 400, { error: err.message });
+    }
     return true;
   }
 

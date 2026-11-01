@@ -2,9 +2,9 @@ const fs = require('fs');
 const path = require('path');
 const { execFile, spawn } = require('child_process');
 const { DATA_DIR, PACKAGE_ROOT } = require('./config');
+const settings = require('./settings');
 
 const PACKAGE = require('../package.json');
-const REGISTRY = (process.env.A2A_NPM_REGISTRY || 'https://registry.npmjs.org').replace(/\/+$/, '');
 const CHECK_TTL_MS = 6 * 60 * 60 * 1000;
 const INSTALL_TIMEOUT_MS = 5 * 60 * 1000;
 const FORCE_MIN_INTERVAL_MS = 60 * 1000;
@@ -66,11 +66,15 @@ function compareVersions(a, b) {
 }
 
 function checksEnabled() {
-  return process.env.A2A_UPDATE_CHECK !== '0';
+  return settings.get('A2A_UPDATE_CHECK');
+}
+
+function registry() {
+  return settings.get('A2A_NPM_REGISTRY').replace(/\/+$/, '');
 }
 
 function npmBin() {
-  if (process.env.A2A_NPM_BIN) return process.env.A2A_NPM_BIN;
+  if (settings.get('A2A_NPM_BIN')) return settings.get('A2A_NPM_BIN');
   const besideNode = path.join(path.dirname(process.execPath), process.platform === 'win32' ? 'npm.cmd' : 'npm');
   return fs.existsSync(besideNode) ? besideNode : 'npm';
 }
@@ -125,7 +129,7 @@ function versionInfo(kind = cached && cached.kind) {
 }
 
 async function fetchLatest() {
-  const res = await fetch(`${REGISTRY}/${PACKAGE.name}/latest`, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(8000) });
+  const res = await fetch(`${registry()}/${PACKAGE.name}/latest`, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(8000) });
   if (!res.ok) throw new Error(`The npm registry answered ${res.status}`);
   const body = await res.json();
   if (typeof body.version !== 'string' || !VERSION_PATTERN.test(body.version)) throw new Error('The npm registry returned no valid version');

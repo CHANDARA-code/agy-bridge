@@ -41,18 +41,14 @@ function getAgentCard() {
 const activeTasks = new Map();
 
 const TASK_ID_PATTERN = /^a2a_[\w-]+$/;
-const KILL_ESCALATION_MS = parseInt(process.env.A2A_KILL_ESCALATION_MS || '5000', 10);
-
-function envInt(name, fallback) {
-  const value = parseInt(process.env[name], 10);
-  return Number.isFinite(value) && value >= 0 ? value : fallback;
-}
+const settings = require('./settings');
+const killEscalationMs = () => settings.get('A2A_KILL_ESCALATION_MS');
 
 const limits = () => ({
-  wallMs: envInt('A2A_TASK_TIMEOUT_MS', 3600000),
-  idleMs: envInt('A2A_IDLE_TIMEOUT_MS', 0),
-  maxConcurrent: envInt('A2A_MAX_CONCURRENT', 4),
-  maxOutputChars: envInt('A2A_MAX_OUTPUT_CHARS', 200000)
+  wallMs: settings.get('A2A_TASK_TIMEOUT_MS'),
+  idleMs: settings.get('A2A_IDLE_TIMEOUT_MS'),
+  maxConcurrent: settings.get('A2A_MAX_CONCURRENT'),
+  maxOutputChars: settings.get('A2A_MAX_OUTPUT_CHARS')
 });
 
 function cancelMarkerPath(taskId) {
@@ -269,7 +265,7 @@ function cancelTask(taskId) {
         signalTaskTree(pid, 'SIGKILL');
       } catch (err) {}
     }
-  }, KILL_ESCALATION_MS).unref();
+  }, killEscalationMs()).unref();
   return { ok: true, code: 200, id: taskId, status: 'cancelled' };
 }
 
@@ -279,7 +275,7 @@ const PRUNE_INTERVAL_MS = 10 * 60 * 1000;
 let lastPruneAt = 0;
 
 function pruneOldLogs() {
-  const days = envInt('A2A_LOG_RETENTION_DAYS', 14);
+  const days = settings.get('A2A_LOG_RETENTION_DAYS');
   if (days <= 0 || Date.now() - lastPruneAt < PRUNE_INTERVAL_MS) return;
   lastPruneAt = Date.now();
   const cutoff = Date.now() - days * 86400000;
@@ -354,7 +350,7 @@ const CHANGES_LIMIT = 2000;
 const VERIFY_OUTPUT_LIMIT = 4000;
 
 function runVerification(command, cwd, logStream, taskId) {
-  const timeoutMs = envInt('A2A_VERIFY_TIMEOUT_MS', 600000);
+  const timeoutMs = settings.get('A2A_VERIFY_TIMEOUT_MS');
   const startedAt = Date.now();
   logStream.write(`\n=== VERIFICATION (run by a2a-panel, not the agent): ${command} ===\n`);
   return new Promise((resolve) => {
@@ -400,7 +396,7 @@ function runVerification(command, cwd, logStream, taskId) {
           try {
             signalTaskTree(child.pid, 'SIGKILL');
           } catch (err) {}
-        }, KILL_ESCALATION_MS));
+        }, killEscalationMs()));
       }, timeoutMs));
     }
   });
@@ -540,7 +536,7 @@ function runAgyTask({ role, prompt, workspace, mode = 'accept-edits', effort = '
   if (maxConcurrent > 0) {
     const running = countRunningTasks();
     if (running >= maxConcurrent) {
-      throw new Error(`Concurrency limit reached: ${running} of ${maxConcurrent} agent tasks are running. Wait for one to finish or cancel one (limit set by A2A_MAX_CONCURRENT).`);
+      throw new Error(`Concurrency limit reached: ${running} of ${maxConcurrent} agent tasks are running. Wait for one to finish or cancel one (change it under Settings, or with A2A_MAX_CONCURRENT).`);
     }
   }
   const taskId = 'a2a_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
@@ -673,7 +669,7 @@ function runAgyTask({ role, prompt, workspace, mode = 'accept-edits', effort = '
       try {
         signalTaskTree(proc.pid, 'SIGKILL');
       } catch (err) {}
-    }, KILL_ESCALATION_MS);
+    }, killEscalationMs());
     escalation.unref();
     timers.push(escalation);
   };

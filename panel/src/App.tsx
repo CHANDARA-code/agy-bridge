@@ -16,7 +16,7 @@ import {
   Typography,
   theme,
 } from "antd";
-import { CloudDownloadOutlined, MoonOutlined, PlusOutlined, ReloadOutlined, SunOutlined, ThunderboltOutlined } from "@ant-design/icons";
+import { CloudDownloadOutlined, MoonOutlined, PlusOutlined, ReloadOutlined, SettingOutlined, SunOutlined, ThunderboltOutlined } from "@ant-design/icons";
 import { api } from "./api";
 import type { DispatchInput, Task, VersionInfo } from "./api";
 import { formatUptime } from "./format";
@@ -28,18 +28,20 @@ import { TaskList } from "./components/TaskList";
 import { UpdateModal } from "./components/UpdateModal";
 
 type Filter = "all" | "running" | "completed" | "failed" | "cancelled" | "stale";
-type View = "tasks" | "teams" | "accounts" | "usage" | "presets";
+type View = "tasks" | "teams" | "accounts" | "usage" | "presets" | "settings";
 
 const PresetsView = lazy(() => import("./components/PresetsView").then((m) => ({ default: m.PresetsView })));
 const AccountsView = lazy(() => import("./components/AccountsView").then((m) => ({ default: m.AccountsView })));
 const TeamsView = lazy(() => import("./components/TeamsView").then((m) => ({ default: m.TeamsView })));
 const UsageView = lazy(() => import("./components/UsageView").then((m) => ({ default: m.UsageView })));
+const SettingsView = lazy(() => import("./components/SettingsView").then((m) => ({ default: m.SettingsView })));
 
 const viewFromHash = (): View => {
   if (window.location.hash === "#teams") return "teams";
   if (window.location.hash === "#accounts") return "accounts";
   if (window.location.hash === "#usage") return "usage";
   if (window.location.hash === "#presets") return "presets";
+  if (window.location.hash === "#settings") return "settings";
   return "tasks";
 };
 
@@ -261,6 +263,14 @@ function Panel() {
             </Button>
           )}
           <Button
+            aria-label="Settings"
+            title="Settings"
+            type={view === "settings" ? "primary" : "default"}
+            ghost={view === "settings"}
+            icon={<SettingOutlined />}
+            onClick={() => changeView("settings")}
+          />
+          <Button
             aria-label={mode === "dark" ? "Switch to light theme" : "Switch to dark theme"}
             icon={mode === "dark" ? <SunOutlined /> : <MoonOutlined />}
             onClick={toggleTheme}
@@ -293,6 +303,12 @@ function Panel() {
           {view === "accounts" && (
             <Suspense fallback={<Skeleton active />}>
               <AccountsView isMobile={isMobile} />
+            </Suspense>
+          )}
+
+          {view === "settings" && (
+            <Suspense fallback={<Skeleton active />}>
+              <SettingsView isMobile={isMobile} />
             </Suspense>
           )}
 

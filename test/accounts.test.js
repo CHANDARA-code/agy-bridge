@@ -63,6 +63,7 @@ async function startInstance(extraEnv = {}) {
       A2A_PORT: String(port),
       A2A_LOGS_DIR: logsDir,
       A2A_TOKEN_FILE: tokenFile,
+      A2A_SETTINGS_FILE: path.join(sandbox, 'settings.json'),
       A2A_PRESETS_DIR: presetsDir,
       A2A_ACCOUNTS_DIR: accountsDir,
       A2A_REAL_HOME: realHome,

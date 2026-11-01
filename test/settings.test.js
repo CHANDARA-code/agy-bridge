@@ -86,6 +86,69 @@ const dispatch = (instance) => fetch(`${instance.base}/api/tasks`, {
   body: JSON.stringify({ role: 'web-engineer', prompt: 'work', workspace: instance.workspace })
 });
 
+test('settings list their defaults and sources, and saving writes a private file that wins over the default', async () => {
+  const instance = await startInstance({ A2A_KILL_ESCALATION_MS: '2000' });
+  const listed = await getSettings(instance);
+  const byKey = Object.fromEntries(listed.map((s) => [s.key, s]));
+  assert.strictEqual(byKey.A2A_MAX_CONCURRENT.value, 6);
+  assert.strictEqual(byKey.A2A_MAX_CONCURRENT.source, 'default');
+  assert.strictEqual(byKey.A2A_KILL_ESCALATION_MS.value, 2000);
+  assert.strictEqual(byKey.A2A_KILL_ESCALATION_MS.source, 'env');
+  assert.strictEqual(byKey.A2A_TELEGRAM_API, undefined);
+
+  const saved = await put(instance, { A2A_TASK_TIMEOUT_MS: 1800000, A2A_LOG_RETENTION_DAYS: 30, A2A_NPM_REGISTRY: 'https://registry.example.com/' });
+  assert.strictEqual(saved.status, 200);
+  const after = Object.fromEntries((await getSettings(instance)).map((s) => [s.key, s]));
+  assert.strictEqual(after.A2A_TASK_TIMEOUT_MS.value, 1800000);
+  assert.strictEqual(after.A2A_TASK_TIMEOUT_MS.source, 'file');
+  assert.strictEqual(after.A2A_LOG_RETENTION_DAYS.value, 30);
+  assert.strictEqual(after.A2A_UPDATE_CHECK.source, 'env');
+  const file = path.join(instance.sandbox, 'settings.json');
+  assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600);
+  assert.strictEqual(JSON.parse(fs.readFileSync(file, 'utf-8')).A2A_TASK_TIMEOUT_MS, 1800000);
+
+  assert.strictEqual((await put(instance, { A2A_TASK_TIMEOUT_MS: null })).status, 200);
+  const reset = Object.fromEntries((await getSettings(instance)).map((s) => [s.key, s]));
+  assert.strictEqual(reset.A2A_TASK_TIMEOUT_MS.value, 3600000);
+  assert.strictEqual(reset.A2A_TASK_TIMEOUT_MS.source, 'default');
+});
+
+test('bad settings are refused and nothing is written', async () => {
+  const instance = await startInstance({ A2A_KILL_ESCALATION_MS: '2000' });
+  const cases = [
+    [{ A2A_MAX_CONCURRENT: 'many' }, 400, /whole number/],
+    [{ A2A_MAX_CONCURRENT: 999 }, 400, /at most 200/],
+    [{ A2A_NPM_REGISTRY: 'ftp://x' }, 400, /http/],
+    [{ A2A_NPM_BIN: 'npm' }, 400, /absolute path/],
+    [{ A2A_NOPE: 1 }, 400, /Unknown setting/],
+    [{ A2A_TELEGRAM_API: 'https://evil.example.com' }, 400, /Unknown setting/],
+    [{ A2A_KILL_ESCALATION_MS: 1000 }, 409, /environment variable/]
+  ];
+  for (const [values, status, pattern] of cases) {
+    const res = await put(instance, values);
+    assert.strictEqual(res.status, status, JSON.stringify(values));
+    assert.match((await res.json()).error, pattern);
+  }
+  assert.strictEqual((await put(instance, { A2A_MAX_CONCURRENT: 2 }, { 'Content-Type': 'application/json' })).status, 401);
+  assert.strictEqual(fs.existsSync(path.join(instance.sandbox, 'settings.json')), false);
+});
+
+test('a new agent limit applies to the next task without a restart', async () => {
+  const instance = await startInstance();
+  assert.strictEqual((await put(instance, { A2A_MAX_CONCURRENT: 1 })).status, 200);
+  const first = await dispatch(instance);
+  assert.strictEqual(first.status, 202);
+  const { taskId } = await first.json();
+  await waitFor(async () => {
+    const tasks = (await (await fetch(`${instance.base}/api/tasks`)).json()).tasks;
+    return tasks.some((t) => t.id === taskId && t.cancellable);
+  });
+  const second = await dispatch(instance);
+  assert.strictEqual(second.status, 400);
+  assert.match((await second.json()).error, /Concurrency limit reached.*Settings/);
+  await fetch(`${instance.base}/api/tasks/${taskId}/cancel`, { method: 'POST', headers: authed() });
+});
+
 test('the log can be read in pieces from an offset', async () => {
   const instance = await startInstance();
   const { taskId } = await (await dispatch(instance)).json();

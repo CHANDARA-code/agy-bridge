@@ -10,3 +10,4 @@ server.pid
 presets/
 accounts/
 teams/
+settings.json
