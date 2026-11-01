@@ -15,6 +15,7 @@ const BASE_PATH = '/dashboard';
 const DIST_DIR = path.join(PACKAGE_ROOT, 'panel', 'dist');
 const TOKEN_PLACEHOLDER = '__A2A_TOKEN__';
 const LEGACY_STALE_MS = 12 * 60 * 60 * 1000;
+const FINISH_GRACE_MS = 10000;
 const HEAD_BYTES = 16000;
 const DETAIL_HEAD_BYTES = 80000;
 const TAIL_BYTES = 6000;
@@ -149,7 +150,7 @@ function parseLog(id, headBytes = HEAD_BYTES) {
 
   let status = 'running';
   if (finished) status = finished[2];
-  else if (!isAlive(id)) status = 'stale';
+  else if (!isAlive(id)) status = Date.now() - stat.mtimeMs < FINISH_GRACE_MS ? 'running' : 'stale';
   else if (!hasPid && Date.now() - stat.mtimeMs > LEGACY_STALE_MS) status = 'stale';
   if (cancelRequested && (status === 'failed' || status === 'stale')) status = 'cancelled';
 
