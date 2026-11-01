@@ -99,7 +99,7 @@ function SettingField({ entry, value, onChange, onReset, extra }: FieldProps) {
         min={entry.min !== undefined ? entry.min / factor : undefined}
         max={entry.max !== undefined ? entry.max / factor : undefined}
         precision={factor === 1 ? 0 : undefined}
-        step={factor === 1 ? 1 : 0.5}
+        step={1}
         disabled={locked}
         addonAfter={unit || undefined}
         aria-label={entry.label}
