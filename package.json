@@ -1,7 +1,7 @@
 {
   "name": "a2a-panel",
-  "version": "0.3.0",
-  "description": "Delegate coding work from Claude Code to a team of Google Antigravity (agy) specialists, with a web panel, token usage tracking and safe process control.",
+  "version": "0.4.0",
+  "description": "Delegate coding work from Claude Code to teams of Antigravity, Claude Code and Codex agents, with a web panel, Telegram remote control, token usage tracking and safe process control.",
   "author": "leavchandara",
   "repository": {
     "type": "git",
@@ -37,6 +37,7 @@
     "preset-templates",
     "team-templates",
     "panel/dist",
+    "panel/src/assets/service-logos/LICENSE",
     "LICENSE",
     "CHANGELOG.md",
     "README.md"
@@ -48,6 +49,10 @@
     "mcp",
     "a2a",
     "agent",
-    "delegation"
+    "delegation",
+    "codex",
+    "multi-agent",
+    "telegram-bot",
+    "remote-control"
   ]
 }

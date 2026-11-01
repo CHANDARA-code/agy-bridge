@@ -29,7 +29,7 @@ jobs:
             const files = JSON.parse(require('fs').readFileSync('pack.json', 'utf8'))[0].files.map((f) => f.path);
             const banned = files.filter((f) => /^(test|logs|scripts|presets|accounts|teams|\.github)\//.test(f) || /(^|\/)(token|server\.(log|err|pid))$/.test(f));
             if (banned.length) { console.error('Files that must not be published:', banned); process.exit(1); }
-            for (const need of ['cli.js', 'server.js', 'mcp-server.js', 'src/cli.js', 'src/server.js', 'src/dispatcher.js', 'src/presets.js', 'src/updates.js', 'agent-card.json', 'LICENSE', 'personas/web-engineer.md', 'preset-templates/nestjs-react/preset.json']) {
+            for (const need of ['cli.js', 'server.js', 'mcp-server.js', 'src/cli.js', 'src/server.js', 'src/dispatcher.js', 'src/presets.js', 'src/updates.js', 'src/settings.js', 'src/telegram.js', 'src/api-services.js', 'agent-card.json', 'LICENSE', 'personas/web-engineer.md', 'preset-templates/nestjs-react/preset.json']) {
               if (!files.includes(need)) { console.error('Missing from package:', need); process.exit(1); }
             }
             console.log('Package has', files.length, 'files');
