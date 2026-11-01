@@ -3,7 +3,8 @@ const path = require('path');
 const os = require('os');
 const { execFile, execFileSync } = require('child_process');
 const { DATA_DIR } = require('./config');
-const { PROVIDERS, statusCommand, parseStatus, resolveBin, logoutArgs } = require('./providers');
+const { PROVIDERS, MODEL_PATTERN, statusCommand, parseStatus, resolveBin, logoutArgs } = require('./providers');
+const apiServices = require('./api-services');
 
 const RESERVED_IDS = new Set(['agy', 'claude', 'codex', 'none', 'default', 'system', 'logins']);
 const ACCOUNT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,47}$/;
@@ -309,7 +310,91 @@ function accountEnv(account, baseEnv = process.env) {
   if (!account.system) {
     for (const name of REMOVED_ENV[account.provider] || []) delete env[name];
   }
+  if (account.apiKey) {
+    const key = readApiKey(account);
+    if (!key) throw new AccountError(`Account "${account.id}" has no API key saved`, 400);
+    apiServices.taskEnv(account, key, env);
+  }
   return env;
+}
+
+const apiKeyFile = (account) => path.join(getAccountsDir(), account.id, 'api-key');
+
+function readApiKey(account) {
+  try {
+    return fs.readFileSync(apiKeyFile(account), 'utf-8').trim();
+  } catch (err) {
+    return '';
+  }
+}
+
+const API_KEY_PATTERN = /^[\x21-\x7e]{8,1024}$/;
+const LOOPBACK_URL = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?(\/|$)/;
+
+function validBaseUrl(value, service) {
+  const text = typeof value === 'string' ? value.trim().replace(/\/+$/, '') : '';
+  if (!text) {
+    if (service.baseUrl === '' || /\{/.test(service.baseUrl || '')) throw new AccountError(`${service.name} needs a base URL`, 400);
+    return null;
+  }
+  if (text.length > 300 || /[\s"'\\<>{}]/.test(text) || !(/^https:\/\/[^/]/.test(text) || LOOPBACK_URL.test(text))) {
+    throw new AccountError('The base URL must be an https:// address (http:// only for localhost), without spaces or placeholders like {WorkspaceId}', 400);
+  }
+  return text === service.baseUrl ? null : text;
+}
+
+function applyApiKey(record, { service: serviceId, key, baseUrl, fastModel }, { requireKey }) {
+  const service = apiServices.getService(serviceId);
+  if (!service) throw new AccountError(`Unknown API service "${serviceId}"`, 400);
+  if (service.engine !== record.provider) throw new AccountError(`${service.name} runs with ${PROVIDERS[service.engine].name}, not ${PROVIDERS[record.provider].name}`, 400);
+  const trimmed = typeof key === 'string' ? key.trim() : '';
+  if (trimmed && !API_KEY_PATTERN.test(trimmed)) throw new AccountError('The API key must be 8 to 1024 characters without spaces', 400);
+  if (!trimmed && requireKey) throw new AccountError('Paste the API key', 400);
+  const previous = record.apiKey && record.apiKey.service === service.id ? record.apiKey : null;
+  record.apiKey = {
+    service: service.id,
+    baseUrl: baseUrl === undefined && previous ? previous.baseUrl : validBaseUrl(baseUrl, service),
+    fastModel: fastModel === undefined ? (previous ? previous.fastModel : null) : validModel(fastModel),
+    last4: trimmed ? trimmed.slice(-4) : previous ? previous.last4 : ''
+  };
+  if (!record.model && service.models.main) record.model = service.models.main;
+  const needsModel = service.engine === 'codex' ? service.id !== 'openai' : service.id !== 'anthropic';
+  if (needsModel && !record.model) throw new AccountError(`Choose the ${service.name} model this account uses`, 400);
+  return { service, key: trimmed };
+}
+
+function writeApiFiles(record, key) {
+  const dir = path.join(getAccountsDir(), record.id);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (key) {
+    const temp = `${apiKeyFile(record)}.${process.pid}.tmp`;
+    fs.writeFileSync(temp, key + '\n', { mode: 0o600 });
+    fs.renameSync(temp, apiKeyFile(record));
+    fs.chmodSync(apiKeyFile(record), 0o600);
+  }
+  const config = apiServices.codexConfig(record);
+  if (record.provider === 'codex') {
+    const home = accountFolder(record);
+    fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+    const file = path.join(home, 'config.toml');
+    if (config) fs.writeFileSync(file, config, { mode: 0o600 });
+    else fs.rmSync(file, { force: true });
+  }
+}
+
+function setApiKey(id, { key, baseUrl, fastModel, model } = {}) {
+  if (SYSTEM_ACCOUNTS_TEMPLATE[id]) throw new AccountError('A default sign-in cannot use an API key', 400);
+  const store = readStore();
+  const account = store.accounts.find((a) => a.id === id);
+  if (!account) throw new AccountError(`Account "${id}" not found`, 404);
+  if (!account.apiKey) throw new AccountError(`Account "${id}" signs in with ${PROVIDERS[account.provider].name}, not an API key`, 400);
+  if (model !== undefined) account.model = validModel(model);
+  const { key: saved } = applyApiKey(account, { service: account.apiKey.service, key, baseUrl, fastModel }, { requireKey: false });
+  writeApiFiles(account, saved);
+  if (saved) account.status = { state: 'unknown', detail: 'Not checked yet', email: null, plan: null, checkedAt: null, warning: null };
+  writeStore(store);
+  forgetModels(id);
+  return account;
 }
 
 function resolveAccount(id) {
@@ -323,28 +408,33 @@ function resolveAccount(id) {
   return account;
 }
 
-const MODEL_PATTERN = /^[A-Za-z0-9][\w.:-]{0,63}$/;
 
 function validModel(model) {
   const value = typeof model === 'string' ? model.trim() : '';
   if (!value) return null;
-  if (!MODEL_PATTERN.test(value)) throw new AccountError('Invalid model name: use letters, digits, ".", ":", "_" or "-" (at most 64)', 400);
+  if (!MODEL_PATTERN.test(value)) throw new AccountError('Invalid model name: use letters, digits and . : _ - / ~ @ + [ ] (at most 128)', 400);
   return value;
 }
 
 function signOutBeforeDelete(account) {
-  if (account.provider !== 'claude' && account.provider !== 'codex') return;
+  if (account.apiKey || (account.provider !== 'claude' && account.provider !== 'codex')) return;
   try {
     execFileSync(resolveBin(account.provider), logoutArgs(account.provider), { env: accountEnv(account), stdio: 'ignore', timeout: 20000 });
   } catch (err) {}
 }
 
-function createAccount({ id, provider, label, model }) {
+function createAccount({ id, provider, label, model, apiKey }) {
   if (!ACCOUNT_ID_PATTERN.test(id)) {
     throw new AccountError('Invalid account id', 400);
   }
   if (RESERVED_IDS.has(id)) {
     throw new AccountError(`Account id "${id}" is reserved`, 400);
+  }
+  if (apiKey !== undefined && apiKey !== null) {
+    if (typeof apiKey !== 'object' || Array.isArray(apiKey)) throw new AccountError('apiKey must be an object with service and key', 400);
+    const service = apiServices.getService(apiKey.service);
+    if (!service) throw new AccountError(`Unknown API service "${apiKey.service}"`, 400);
+    provider = provider || service.engine;
   }
   if (!PROVIDERS[provider]) {
     throw new AccountError(`Unknown provider "${provider}"`, 400);
@@ -353,9 +443,6 @@ function createAccount({ id, provider, label, model }) {
   if (store.accounts.some((a) => a.id === id)) {
     throw new AccountError(`Account "${id}" already exists`, 409);
   }
-
-  const folder = path.join(getAccountsDir(), id);
-  fs.mkdirSync(folder, { recursive: true, mode: 0o700 });
 
   const record = {
     id,
@@ -376,6 +463,15 @@ function createAccount({ id, provider, label, model }) {
     budget: null
   };
 
+  let key = '';
+  if (apiKey) {
+    ({ key } = applyApiKey(record, apiKey, { requireKey: true }));
+    record.signedInHere = true;
+  }
+  const folder = path.join(getAccountsDir(), id);
+  fs.mkdirSync(folder, { recursive: true, mode: 0o700 });
+  if (apiKey) writeApiFiles(record, key);
+
   store.accounts.push(record);
   writeStore(store);
   return record;
@@ -395,6 +491,11 @@ function updateAccount(id, { label, model }) {
   }
   if (model !== undefined) {
     account.model = validModel(model);
+    if (account.apiKey) {
+      applyApiKey(account, { service: account.apiKey.service }, { requireKey: false });
+      writeApiFiles(account, '');
+      forgetModels(id);
+    }
   }
   writeStore(store);
   return account;
@@ -678,12 +779,36 @@ function saveStatus(id, status) {
 
 const MODELS_TTL_MS = 10 * 60 * 1000;
 const modelLists = new Map();
+const modelGenerations = new Map();
+
+function forgetModels(id) {
+  modelGenerations.set(id, (modelGenerations.get(id) || 0) + 1);
+  modelLists.delete(id);
+}
 
 function listModels(id, { refresh = false } = {}) {
   const account = getAccount(id);
   if (!account) return Promise.reject(new AccountError(`Account "${id}" not found`, 404));
   const cached = modelLists.get(id);
   if (cached && (cached.pending || (!refresh && Date.now() - cached.at < MODELS_TTL_MS))) return cached.pending || Promise.resolve(cached.value);
+  if (account.apiKey) {
+    const service = apiServices.getService(account.apiKey.service);
+    const generation = modelGenerations.get(id) || 0;
+    const pending = apiServices.checkKey(account, readApiKey(account)).then((result) => {
+      const value = {
+        account: id,
+        provider: account.provider,
+        models: service ? apiServices.modelsFrom(service, result.body).filter((model) => MODEL_PATTERN.test(model.id)) : [],
+        source: service ? `${service.name} API` : 'API',
+        fetchedAt: new Date().toISOString(),
+        error: result.state === 'signed-in' ? null : result.detail
+      };
+      if ((modelGenerations.get(id) || 0) === generation) modelLists.set(id, { at: Date.now(), value });
+      return value;
+    });
+    modelLists.set(id, { at: cached ? cached.at : 0, value: cached ? cached.value : null, pending });
+    return pending;
+  }
   const { modelsCommand, parseModels } = require('./providers');
   const command = modelsCommand(account.provider);
   const pending = new Promise((resolve) => {
@@ -705,7 +830,15 @@ function listModels(id, { refresh = false } = {}) {
   return pending;
 }
 
+async function checkApiAccount(account) {
+  const result = await apiServices.checkKey(account, readApiKey(account));
+  const status = { state: result.state, detail: result.detail, email: null, plan: null, checkedAt: new Date().toISOString(), warning: null };
+  return saveStatus(account.id, status) || { ...account, status };
+}
+
 function checkAccount(id) {
+  const apiAccount = getAccount(id);
+  if (apiAccount && apiAccount.apiKey) return checkApiAccount(apiAccount);
   return new Promise((resolve, reject) => {
     const account = getAccount(id);
     if (!account) {
@@ -758,6 +891,7 @@ module.exports = {
   getAccount,
   createAccount,
   updateAccount,
+  setApiKey,
   deleteAccount,
   resolveAccount,
   accountEnv,

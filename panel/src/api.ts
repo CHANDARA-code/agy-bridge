@@ -210,6 +210,38 @@ export interface Account {
   limits?: AccountLimits | null;
   avatarUrl?: string | null;
   identity?: AccountIdentity | null;
+  apiKey?: AccountApiKey | null;
+}
+
+export interface AccountApiKey {
+  service: string;
+  serviceName: string;
+  baseUrl: string | null;
+  fastModel: string | null;
+  last4: string;
+}
+
+export interface ApiService {
+  id: string;
+  name: string;
+  engine: "claude" | "codex";
+  region: string;
+  baseUrl: string | null;
+  baseUrlHelp: string | null;
+  baseUrlRequired: boolean;
+  keyHint: string;
+  keyPage: string | null;
+  docs: string;
+  models: { main: string; fast: string };
+  needsModel: boolean;
+  checksKey: boolean;
+}
+
+export interface ApiKeyInput {
+  service: string;
+  key?: string;
+  baseUrl?: string | null;
+  fastModel?: string | null;
 }
 
 export interface AccountIdentity {
@@ -545,7 +577,10 @@ export const api = {
     request<{ account: Account }>(`/api/accounts/${id}/avatar`, { method: "PUT", body: JSON.stringify({ image }) }).then((r) => r.account),
   deleteAccountAvatar: (id: string) =>
     request<{ account: Account }>(`/api/accounts/${id}/avatar`, { method: "DELETE" }).then((r) => r.account),
-  createAccount: (input: { id: string; provider: ProviderId; label?: string; model?: string | null }) =>
+  apiServices: () => request<{ services: ApiService[] }>("/api/api-services").then((r) => r.services),
+  setApiKey: (id: string, input: Omit<ApiKeyInput, "service"> & { model?: string | null }) =>
+    request<{ account: Account }>(`/api/accounts/${id}/api-key`, { method: "PUT", body: JSON.stringify(input) }).then((r) => r.account),
+  createAccount: (input: { id: string; provider?: ProviderId; label?: string; model?: string | null; apiKey?: ApiKeyInput }) =>
     request<{ account: Account }>("/api/accounts", { method: "POST", body: JSON.stringify(input) }).then((r) => r.account),
   updateAccount: (id: string, input: { label?: string; model?: string | null }) =>
     request<{ account: Account }>(`/api/accounts/${id}`, { method: "PUT", body: JSON.stringify(input) }).then((r) => r.account),

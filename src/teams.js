@@ -17,7 +17,7 @@ class TeamError extends Error {
 const TEAM_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,47}$/;
 const RESERVED_IDS = new Set(['none', 'default']);
 const EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
-const MODEL_PATTERN = /^[A-Za-z0-9][\w.:-]{0,63}$/;
+const { MODEL_PATTERN } = providers;
 const RUN_ID_PATTERN = /^run_\d+_[a-z0-9]+$/;
 const UNFINISHED_RUN_STATUSES = new Set(['planning', 'planned', 'running', 'reviewing']);
 const activeRuns = new Map();

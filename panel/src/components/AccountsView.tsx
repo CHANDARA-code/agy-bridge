@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, App as AntApp, Button, Card, Collapse, Dropdown, Empty, Flex, Form, Input, Modal, Select, Skeleton, Tag, Tooltip, Typography, theme } from "antd";
 import type { MenuProps } from "antd";
-import { DeleteOutlined, EditOutlined, LoginOutlined, LogoutOutlined, MoreOutlined, PictureOutlined, PlusOutlined, ReloadOutlined } from "@ant-design/icons";
+import { DeleteOutlined, EditOutlined, KeyOutlined, LoginOutlined, LogoutOutlined, MoreOutlined, PictureOutlined, PlusOutlined, ReloadOutlined } from "@ant-design/icons";
 import { accountDisplayName, accountEmail, api } from "../api";
 import type { Account, LoginSession, Provider, ProviderId } from "../api";
 import { useServerEvent } from "../events";
@@ -11,6 +11,7 @@ import { AccountAvatar, loadAccounts } from "./AccountAvatar";
 import { AvatarModal } from "./AvatarModal";
 import { ModelSelect } from "./ModelSelect";
 import { ProviderIcon } from "./ProviderIcon";
+import { ApiKeyModal } from "./ApiKeyModal";
 
 interface AccountsViewProps {
   isMobile: boolean;
@@ -72,6 +73,7 @@ export function AccountsView({ isMobile }: AccountsViewProps) {
   const [loggingOutIds, setLoggingOutIds] = useState<Set<string>>(new Set());
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
   const [avatarAccount, setAvatarAccount] = useState<Account | null>(null);
+  const [apiKeyTarget, setApiKeyTarget] = useState<{ account: Account | null } | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -365,6 +367,8 @@ export function AccountsView({ isMobile }: AccountsViewProps) {
 
   const renderStatusTag = (acc: Account) => {
     const state = acc.status?.state ?? "unknown";
+    if (acc.apiKey && state === "signed-in") return <Tag color="success" style={{ marginInlineEnd: 0 }}>Key ready</Tag>;
+    if (acc.apiKey && state === "signed-out") return <Tag color="error" style={{ marginInlineEnd: 0 }}>Key not working</Tag>;
     if (state === "signed-in") {
       const emailPart = acc.status?.email ? ` · ${acc.status.email}` : "";
       const planPart = acc.status?.plan ? ` (${acc.status.plan})` : "";
@@ -433,7 +437,13 @@ export function AccountsView({ isMobile }: AccountsViewProps) {
   const cardActions = (acc: Account, prov: Provider) => {
     const signedIn = acc.status?.state === "signed-in";
     const actions = [];
-    if (!signedIn) {
+    if (acc.apiKey) {
+      actions.push(
+        <Button type="link" size="small" icon={<KeyOutlined />} key="key" onClick={() => setApiKeyTarget({ account: acc })}>
+          Change key
+        </Button>,
+      );
+    } else if (!signedIn) {
       actions.push(
         <Button type="link" size="small" icon={<LoginOutlined />} key="login" onClick={() => signInFromCard(acc, prov)}>
           Sign in
@@ -452,7 +462,7 @@ export function AccountsView({ isMobile }: AccountsViewProps) {
       </Button>,
     );
     const items: MenuProps["items"] = [
-      ...(signedIn ? [{ key: "signin", icon: <LoginOutlined />, label: "Sign in again" }] : []),
+      ...(signedIn && !acc.apiKey ? [{ key: "signin", icon: <LoginOutlined />, label: "Sign in again" }] : []),
       { key: "picture", icon: <PictureOutlined />, label: "Change picture" },
       ...(!acc.system ? [{ key: "edit", icon: <EditOutlined />, label: "Edit name or model" }] : []),
       ...(acc.system && signedIn && prov.canLogout ? [{ key: "logout", icon: <LogoutOutlined />, label: "Sign out…", danger: true }] : []),
@@ -586,6 +596,11 @@ export function AccountsView({ isMobile }: AccountsViewProps) {
                             <span>{prov.name}</span>
                           </Tag>
                           {acc.system && <Tag color="blue" style={{ marginInlineEnd: 0 }}>Default sign-in</Tag>}
+                          {acc.apiKey && (
+                            <Tag color="purple" icon={<KeyOutlined />} style={{ marginInlineEnd: 0 }}>
+                              {acc.apiKey.serviceName} · …{acc.apiKey.last4}
+                            </Tag>
+                          )}
                           {acc.model && <Tag style={{ marginInlineEnd: 0 }}>{acc.model}</Tag>}
                         </Flex>
                       </Flex>
@@ -694,6 +709,35 @@ export function AccountsView({ isMobile }: AccountsViewProps) {
             })}
           </div>
 
+          <Card
+            hoverable
+            onClick={() => {
+              setAddOpen(false);
+              setApiKeyTarget({ account: null });
+            }}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setAddOpen(false);
+                setApiKeyTarget({ account: null });
+              }
+            }}
+            style={{ border: `1px solid ${token.colorBorderSecondary}` }}
+            styles={{ body: { padding: "16px 18px" } }}
+          >
+            <Flex align="center" gap={14}>
+              <KeyOutlined style={{ fontSize: 28, color: token.colorPrimary }} />
+              <div>
+                <Typography.Text strong style={{ fontSize: 16, display: "block" }}>Use an API key</Typography.Text>
+                <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+                  DeepSeek, Kimi, GLM, MiniMax, Qwen, OpenRouter, Anthropic, OpenAI and other compatible APIs. Runs with Claude Code or Codex.
+                </Typography.Text>
+              </div>
+            </Flex>
+          </Card>
+
           <Collapse
             ghost
             items={[
@@ -783,6 +827,19 @@ export function AccountsView({ isMobile }: AccountsViewProps) {
         onStarted={(method) => setPendingNewAccount((pending) => (pending ? { ...pending, method } : pending))}
         onClose={handleSignInClose}
         onSuccess={handleSignInSuccess}
+      />
+
+      <ApiKeyModal
+        open={apiKeyTarget !== null}
+        account={apiKeyTarget?.account ?? null}
+        accounts={accounts}
+        installed={installedProviders.map((p) => p.id)}
+        isMobile={isMobile}
+        onClose={() => setApiKeyTarget(null)}
+        onSaved={() => {
+          setApiKeyTarget(null);
+          refresh();
+        }}
       />
 
       <AvatarModal

@@ -12,6 +12,7 @@ const { PACKAGE_ROOT } = require('./config');
 const updates = require('./updates');
 const settings = require('./settings');
 const telegram = require('./telegram');
+const apiServices = require('./api-services');
 
 const BASE_PATH = '/dashboard';
 const DIST_DIR = path.join(PACKAGE_ROOT, 'panel', 'dist');
@@ -440,7 +441,8 @@ function decorateAccount(acc) {
     budget: acc.budget || null,
     limits: acc.limits || null,
     budgetUsed: acc.budget ? getBudgetUsed(acc) : null,
-    avatarUrl: acc.avatarUrl || null
+    avatarUrl: acc.avatarUrl || null,
+    apiKey: acc.apiKey ? { ...acc.apiKey, serviceName: (apiServices.getService(acc.apiKey.service) || { name: acc.apiKey.service }).name } : null
   };
 }
 
@@ -566,7 +568,7 @@ async function handleAccounts(req, res, method, pathname) {
     return true;
   }
 
-  const accountMatch = pathname.match(/^\/api\/accounts(?:\/([\w-]+)(?:\/(check|login|logout|models))?)?$/);
+  const accountMatch = pathname.match(/^\/api\/accounts(?:\/([\w-]+)(?:\/(check|login|logout|models|api-key))?)?$/);
   if (!accountMatch) return false;
   const [, id, action] = accountMatch;
 
@@ -600,7 +602,18 @@ async function handleAccounts(req, res, method, pathname) {
     await run(async () => {
       const body = await readJson(req);
       const account = accounts.createAccount(body);
-      sendJson(res, 201, { account: decorateAccount(account) });
+      const checked = account.apiKey ? await accounts.checkAccount(account.id).catch(() => account) : account;
+      sendJson(res, 201, { account: decorateAccount(checked) });
+    });
+    return true;
+  }
+
+  if (id && action === 'api-key' && method === 'PUT') {
+    await run(async () => {
+      const body = await readJson(req);
+      const account = accounts.setApiKey(id, body);
+      const checked = await accounts.checkAccount(account.id).catch(() => account);
+      sendJson(res, 200, { account: decorateAccount(checked) });
     });
     return true;
   }
@@ -651,6 +664,7 @@ async function handleAccounts(req, res, method, pathname) {
     await run(async () => {
       const account = accounts.getAccount(id);
       if (!account) return sendJson(res, 404, { error: `Account "${id}" not found` });
+      if (account.apiKey) return sendJson(res, 400, { error: 'This account uses an API key. Delete the account, or replace the key with Change key.' });
       if (account.provider === 'agy') {
         return sendJson(res, 400, { error: 'Antigravity has no sign-out command; delete the account to remove its sign-in' });
       }
@@ -1269,6 +1283,11 @@ async function handle(req, res, pathname, { token }) {
       'Cache-Control': 'max-age=3600'
     });
     res.end(icon.data);
+    return true;
+  }
+
+  if (method === 'GET' && pathname === '/api/api-services') {
+    sendJson(res, 200, { services: apiServices.listServices() });
     return true;
   }
 

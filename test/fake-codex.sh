@@ -5,6 +5,8 @@ if [ -n "$FAKE_ARGS_FILE" ]; then
     echo "HOME: $HOME"
     echo "CODEX_HOME: $CODEX_HOME"
     echo "OPENAI_API_KEY_SET: $([ -n "$OPENAI_API_KEY" ] && echo yes || echo no)"
+    echo "CODEX_API_KEY_SET: $([ -n "$CODEX_API_KEY" ] && echo yes || echo no)"
+    echo "A2A_PROVIDER_API_KEY_SET: $([ -n "$A2A_PROVIDER_API_KEY" ] && echo yes || echo no)"
   } >> "$FAKE_ARGS_FILE"
 fi
 

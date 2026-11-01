@@ -183,6 +183,7 @@ function startLogin(accountId, method) {
   if (!account) {
     throw new AccountError(`Account "${accountId}" not found`, 404);
   }
+  if (account.apiKey) throw new AccountError('This account uses an API key. Use Change key instead of signing in.', 400);
   const providerDef = PROVIDERS[account.provider];
   if (!providerDef || !providerDef.loginMethods.includes(method)) {
     throw new AccountError(`Provider "${account.provider}" does not support login method "${method}"`, 400);

@@ -2,7 +2,7 @@ const { spawn, execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { resolvePreferences } = require('./presets');
-const { resolveBin, buildCommand, createParser, authFailurePattern, signInPromptPattern } = require('./providers');
+const { MODEL_PATTERN, buildCommand, createParser, authFailurePattern, signInPromptPattern } = require('./providers');
 const { resolveAccount, accountEnv, markSignedOut } = require('./accounts');
 
 const { DATA_DIR, PACKAGE_ROOT } = require('./config');
@@ -343,7 +343,6 @@ function loadRolePersona(role) {
 
 const USAGE_LOG = path.join(LOGS_DIR, 'usage.jsonl');
 const CONVERSATION_ID_PATTERN = /^[A-Za-z0-9][\w-]{7,63}$/;
-const MODEL_PATTERN = /^[A-Za-z0-9][\w.:-]{0,63}$/;
 const TASK_MODES = ['accept-edits', 'plan', 'auto'];
 const TASK_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const CHANGES_LIMIT = 2000;
@@ -791,10 +790,15 @@ function runAgyTask({ role, prompt, workspace, mode = 'accept-edits', effort = '
       const authPattern = authFailurePattern(provider);
       const failureText = `${taskRecord.agentError || ''}\n${stderrTail}`;
       if (signInDetected || authPattern.test(failureText)) {
-        markSignedOut(resolvedAcc.id, 'Authentication failed during task');
         const match = failureText.match(authPattern);
         const detail = match ? match[0] : 'sign-in required';
-        taskRecord.error = `Account ${resolvedAcc.id} is not signed in (${detail}). Sign in again from the panel (Accounts) or with "a2a-panel accounts login ${resolvedAcc.id}".`;
+        if (resolvedAcc.apiKey) {
+          markSignedOut(resolvedAcc.id, 'The provider rejected the API key during a task. Replace it with Change key.');
+          taskRecord.error = `The API key of account ${resolvedAcc.id} was rejected (${detail}). Replace it in the panel (Accounts, Change key) or with "a2a-panel accounts key ${resolvedAcc.id}".`;
+        } else {
+          markSignedOut(resolvedAcc.id, 'Authentication failed during task');
+          taskRecord.error = `Account ${resolvedAcc.id} is not signed in (${detail}). Sign in again from the panel (Accounts) or with "a2a-panel accounts login ${resolvedAcc.id}".`;
+        }
         logStream.write(`\n[A2A] Marked failed: ${taskRecord.error}\n`);
       }
     }

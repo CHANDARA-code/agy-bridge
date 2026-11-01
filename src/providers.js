@@ -1,6 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 
+const MODEL_PATTERN = /^[A-Za-z0-9~][\w.:/~@+\[\]-]{0,127}$/;
+
 const PROVIDERS = {
   agy: {
     id: 'agy',
@@ -243,6 +245,7 @@ function createParser(providerId, handlers) {
 }
 
 module.exports = {
+  MODEL_PATTERN,
   PROVIDERS,
   resolveBin,
   buildCommand,

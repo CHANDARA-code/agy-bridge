@@ -35,6 +35,10 @@ Usage:
   a2a-panel run <role> "<task prompt>"  Dispatch task to an Antigravity developer
   a2a-panel accounts [list]           List signed-in accounts and status
   a2a-panel accounts add <id> --provider <agy|claude|codex> [--label <l>] [--model <m>]
+  a2a-panel accounts add <id> --service <service> [--base-url <u>] [--model <m>] [--fast-model <m>] [--label <l>]
+                                      Add an API key account; the key is read from stdin or A2A_API_KEY
+  a2a-panel accounts key <id> [--base-url <u>] [--fast-model <m>]  Replace an API key (stdin or A2A_API_KEY)
+  a2a-panel accounts services         List the API services (DeepSeek, Kimi, GLM, MiniMax, Qwen, OpenRouter, OpenAI, …)
   a2a-panel accounts budget <id> --period day|week|month --tokens N [--stop]
   a2a-panel accounts budget <id> --clear
   a2a-panel accounts login <id>       Sign in to an account in this terminal
@@ -506,25 +510,39 @@ async function handleAccounts(args) {
       console.log('-------------------------------------------------------------------------------------------------\n');
       return;
     }
-    if (sub === 'add') {
-      if (!id) throw new Error('Usage: a2a-panel accounts add <id> --provider <agy|claude|codex> [--label <l>] [--model <m>]');
-      let provider = null;
-      let label = null;
-      let model = null;
+    if (sub === 'services') {
+      const { listServices } = require('./api-services');
+      console.log('\nAPI services for "a2a-panel accounts add <id> --service <service>":\n');
+      for (const service of listServices()) {
+        console.log(`${service.id.padEnd(18)} ${service.name.padEnd(40)} runs with ${providers.PROVIDERS[service.engine].name}${service.region !== 'Global' && service.region !== 'Any' ? ` (${service.region})` : ''}`);
+      }
+      console.log('\nPipe the key in, for example: printf %s "$DEEPSEEK_KEY" | a2a-panel accounts add deepseek-1 --service deepseek\n');
+      return;
+    }
+    if (sub === 'add' || sub === 'key') {
+      if (!id) throw new Error(sub === 'add'
+        ? 'Usage: a2a-panel accounts add <id> (--provider <agy|claude|codex> | --service <service>) [--label <l>] [--model <m>]'
+        : 'Usage: a2a-panel accounts key <id> [--base-url <u>] [--fast-model <m>] (key on stdin or in A2A_API_KEY)');
+      const options = {};
       for (let i = 2; i < args.length; i++) {
-        if (args[i] === '--provider' && args[i + 1]) {
-          provider = args[i + 1];
-          i++;
-        } else if (args[i] === '--label' && args[i + 1]) {
-          label = args[i + 1];
-          i++;
-        } else if (args[i] === '--model' && args[i + 1]) {
-          model = args[i + 1];
+        const name = { '--provider': 'provider', '--label': 'label', '--model': 'model', '--service': 'service', '--base-url': 'baseUrl', '--fast-model': 'fastModel' }[args[i]];
+        if (name && args[i + 1] !== undefined) {
+          options[name] = args[i + 1];
           i++;
         }
       }
-      if (!provider) throw new Error('--provider is required (agy, claude, codex)');
-      const created = accounts.createAccount({ id, provider, label, model });
+      if (sub === 'key' || options.service) {
+        const key = process.stdin.isTTY ? (process.env.A2A_API_KEY || '') : fs.readFileSync(0, 'utf-8').trim();
+        if (!key && sub === 'add') throw new Error('Pipe the API key in (printf %s "$KEY" | a2a-panel accounts add ...) or set A2A_API_KEY');
+        const account = sub === 'add'
+          ? accounts.createAccount({ id, provider: options.provider, label: options.label, model: options.model, apiKey: { service: options.service, key, baseUrl: options.baseUrl, fastModel: options.fastModel } })
+          : accounts.setApiKey(id, { key: key || undefined, baseUrl: options.baseUrl, fastModel: options.fastModel, model: options.model });
+        const checked = await accounts.checkAccount(account.id);
+        console.log(`${sub === 'add' ? 'Created' : 'Updated'} API key account "${checked.id}" (${require('./api-services').getService(checked.apiKey.service).name}, runs with ${providers.PROVIDERS[checked.provider].name}): ${checked.status.detail}`);
+        return;
+      }
+      if (!options.provider) throw new Error('--provider is required (agy, claude, codex), or --service for an API key account');
+      const created = accounts.createAccount({ id, provider: options.provider, label: options.label, model: options.model });
       console.log(`Created account "${created.id}" for ${providers.PROVIDERS[created.provider].name}.`);
       return;
     }
@@ -565,6 +583,7 @@ async function handleAccounts(args) {
       if (!id) throw new Error('Usage: a2a-panel accounts login <id>');
       const account = accounts.getAccount(id);
       if (!account) throw new Error(`Account "${id}" not found`);
+      if (account.apiKey) throw new Error(`Account "${id}" uses an API key. Replace it with: a2a-panel accounts key ${id}`);
       confirmDefault(account, 'Sign in to');
       const env = accounts.accountEnv(account);
       const bin = providers.resolveBin(account.provider);
@@ -598,6 +617,7 @@ async function handleAccounts(args) {
       if (!id) throw new Error('Usage: a2a-panel accounts logout <id>');
       const account = accounts.getAccount(id);
       if (!account) throw new Error(`Account "${id}" not found`);
+      if (account.apiKey) throw new Error(`Account "${id}" uses an API key; delete the account to remove it`);
       if (account.provider === 'agy') {
         throw new Error('Antigravity has no sign-out command; delete the account to remove its sign-in');
       }
