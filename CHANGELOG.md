@@ -4,6 +4,10 @@ All notable changes to a2a-panel are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Added
+
+- Usage chip in the panel header: the account closest to a quota window or budget, coloured from 70% and 90%, or today's tokens when no limit is known. Click it for every account's quota windows, budget and tokens today. Updated by the event stream, no polling.
+
 ## [0.4.0] - 2026-11-01
 
 ### Added
