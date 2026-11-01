@@ -46,7 +46,7 @@ jobs:
           cache-dependency-path: panel/package-lock.json
       - run: npm --prefix panel ci
       - run: npm --prefix panel run build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: panel-dist
           path: panel/dist
