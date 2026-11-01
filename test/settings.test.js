@@ -188,6 +188,28 @@ test('the log can be read in pieces from an offset', async () => {
   await fetch(`${instance.base}/api/tasks/${taskId}/cancel`, { method: 'POST', headers: authed() });
 });
 
+test('an existing macOS login service file gets the interactive process type once', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'a2a-plist-test-'));
+  try {
+    const script = `
+      const autostart = require(${JSON.stringify(path.join(ROOT, 'src', 'autostart.js'))});
+      const fs = require('fs');
+      const path = require('path');
+      const file = path.join(process.env.HOME, 'Library', 'LaunchAgents', autostart.LABEL + '.plist');
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const fresh = autostart.buildPlist({ PATH: '/usr/bin' });
+      fs.writeFileSync(file, fresh.replace('    <key>ProcessType</key>\\n    <string>Interactive</string>\\n', ''));
+      const first = autostart.upgradePlist();
+      const second = autostart.upgradePlist();
+      console.log(JSON.stringify({ fresh: fresh.includes('<key>ProcessType</key>'), first, second, same: fs.readFileSync(file, 'utf-8') === fresh }));
+    `;
+    const out = JSON.parse(execFileSync(process.execPath, ['-e', script], { env: { ...process.env, HOME: home }, encoding: 'utf-8' }));
+    assert.deepStrictEqual(out, { fresh: true, first: true, second: false, same: true });
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 async function readEvents(url, { headers = {}, ms, until = () => false }) {
   const controller = new AbortController();
   const events = [];
