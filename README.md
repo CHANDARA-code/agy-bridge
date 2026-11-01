@@ -424,6 +424,7 @@ Besides signing in, an account can use an API key from a model provider. It runs
 
 - The base URLs and suggested models come from each provider's Claude Code or Codex guide as of November 2026. Model names change often; you can edit them, and the model picker lists the provider's current models where it offers a free model list.
 - Codex accounts get their own `config.toml` with a `model_providers` entry; Codex only speaks the Responses API, so providers that only offer Chat Completions cannot run through Codex.
+- The service logos come from [LobeHub Icons](https://github.com/lobehub/lobe-icons) (MIT, see `panel/src/assets/service-logos/LICENSE`); they are their owners' trademarks and only identify each service.
 - Anthropic says Claude Code is only supported on Claude models. Other providers' Claude Code endpoints are provided and supported by those providers.
 - From the command line: `a2a-panel accounts services` lists the services, `printf %s "$KEY" | a2a-panel accounts add deepseek-1 --service deepseek` adds one (the key is read from stdin or `A2A_API_KEY`, never from the command line), and `a2a-panel accounts key <id>` replaces a key.
 

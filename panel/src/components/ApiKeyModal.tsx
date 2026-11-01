@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Alert, App as AntApp, AutoComplete, Flex, Form, Input, Modal, Select, Tag, Typography } from "antd";
 import { api } from "../api";
 import type { Account, ApiService, ProviderId } from "../api";
+import { ServiceLogo } from "./ServiceLogo";
 
 interface ApiKeyModalProps {
   open: boolean;
@@ -83,10 +84,14 @@ export function ApiKeyModal({ open, account, accounts, installed, isMobile, onCl
           .filter((item) => item.engine === engine)
           .map((item) => ({
             value: item.id,
+            search: `${item.name} ${item.id} ${item.region}`,
             disabled: !installed.includes(engine),
             label: (
-              <Flex justify="space-between" gap={8}>
-                <span>{item.name}</span>
+              <Flex justify="space-between" align="center" gap={8}>
+                <Flex align="center" gap={10} style={{ minWidth: 0 }}>
+                  <ServiceLogo service={item.id} />
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{item.name}</span>
+                </Flex>
                 {item.region !== "Global" && item.region !== "Any" && <Tag style={{ marginInlineEnd: 0 }}>{item.region}</Tag>}
               </Flex>
             ),
@@ -147,7 +152,7 @@ export function ApiKeyModal({ open, account, accounts, installed, isMobile, onCl
           </Typography.Paragraph>
         )}
         <Form.Item name="service" label="Service" rules={[{ required: true, message: "Choose a service" }]}>
-          <Select options={options} onChange={pickService} disabled={editing || saving} placeholder="DeepSeek, Kimi, GLM, MiniMax, Qwen, OpenRouter, OpenAI…" showSearch optionFilterProp="value" />
+          <Select options={options} onChange={pickService} disabled={editing || saving} placeholder="DeepSeek, Kimi, GLM, MiniMax, Qwen, OpenRouter, OpenAI…" showSearch optionFilterProp="search" />
         </Form.Item>
         {service && (
           <Typography.Paragraph type="secondary" style={{ marginTop: -12 }}>

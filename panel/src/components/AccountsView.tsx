@@ -12,6 +12,7 @@ import { AvatarModal } from "./AvatarModal";
 import { ModelSelect } from "./ModelSelect";
 import { ProviderIcon } from "./ProviderIcon";
 import { ApiKeyModal } from "./ApiKeyModal";
+import { ServiceLogo } from "./ServiceLogo";
 
 interface AccountsViewProps {
   isMobile: boolean;
@@ -597,8 +598,9 @@ export function AccountsView({ isMobile }: AccountsViewProps) {
                           </Tag>
                           {acc.system && <Tag color="blue" style={{ marginInlineEnd: 0 }}>Default sign-in</Tag>}
                           {acc.apiKey && (
-                            <Tag color="purple" icon={<KeyOutlined />} style={{ marginInlineEnd: 0 }}>
-                              {acc.apiKey.serviceName} · …{acc.apiKey.last4}
+                            <Tag style={{ marginInlineEnd: 0, display: "inline-flex", alignItems: "center", gap: 5 }}>
+                              <ServiceLogo service={acc.apiKey.service} size={14} />
+                              <span>{acc.apiKey.serviceName} · …{acc.apiKey.last4}</span>
                             </Tag>
                           )}
                           {acc.model && <Tag style={{ marginInlineEnd: 0 }}>{acc.model}</Tag>}
