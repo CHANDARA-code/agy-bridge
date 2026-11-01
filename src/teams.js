@@ -689,13 +689,27 @@ function getRun(runId) {
   return formatRun(run);
 }
 
+const runFileCache = new Map();
+
+function readRunCached(file) {
+  const stat = fs.statSync(file);
+  const key = `${stat.mtimeMs}:${stat.size}`;
+  const hit = runFileCache.get(file);
+  if (hit && hit.key === key) return hit.run;
+  const run = readJsonFile(file);
+  if (run) runFileCache.set(file, { key, run });
+  return run;
+}
+
 function listRuns({ teamId, limit = 50 } = {}) {
   const dir = getRunsDir();
   const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json') && !f.includes('.tmp'));
+  const present = new Set(files.map((file) => path.join(dir, file)));
+  for (const file of runFileCache.keys()) if (!present.has(file)) runFileCache.delete(file);
   const runs = [];
   for (const file of files) {
     try {
-      const run = readJsonFile(path.join(dir, file));
+      const run = readRunCached(path.join(dir, file));
       if (!run) continue;
       if (teamId && run.teamId !== teamId) continue;
       runs.push(formatRun(run));

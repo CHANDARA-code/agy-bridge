@@ -186,13 +186,28 @@ function toSummary(task) {
   return { ...rest, promptPreview: prompt.replace(/\s+/g, ' ').slice(0, 160) };
 }
 
+const summaryCache = new Map();
+const RUNNING_SUMMARY_TTL_MS = 1000;
+
+function cachedSummary(id, names) {
+  const stat = fs.statSync(path.join(LOGS_DIR, `${id}.log`));
+  const key = `${stat.mtimeMs}:${stat.size}:${names.has(`${id}.pid`) ? 1 : 0}:${names.has(`${id}.cancelled`) ? 1 : 0}`;
+  const hit = summaryCache.get(id);
+  if (hit && hit.key === key && (hit.summary.status !== 'running' || Date.now() - hit.at < RUNNING_SUMMARY_TTL_MS)) return hit.summary;
+  const summary = toSummary(parseLog(id));
+  summaryCache.set(id, { key, summary, at: Date.now() });
+  return summary;
+}
+
 function listTasks() {
   if (!fs.existsSync(LOGS_DIR)) return [];
-  return fs.readdirSync(LOGS_DIR)
-    .filter((f) => /^a2a_[\w-]+\.log$/.test(f))
-    .map((f) => {
+  const names = new Set(fs.readdirSync(LOGS_DIR));
+  const ids = [...names].filter((f) => /^a2a_[\w-]+\.log$/.test(f)).map((f) => f.replace(/\.log$/, ''));
+  for (const id of summaryCache.keys()) if (!names.has(`${id}.log`)) summaryCache.delete(id);
+  return ids
+    .map((id) => {
       try {
-        return toSummary(parseLog(f.replace(/\.log$/, '')));
+        return cachedSummary(id, names);
       } catch (err) {
         return null;
       }

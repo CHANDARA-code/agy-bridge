@@ -72,20 +72,89 @@ function startMarkerPath(taskId) {
   return path.join(LOGS_DIR, `${taskId}.start`);
 }
 
-function processCommand(pid) {
+const PROCESS_TABLE_TTL_MS = 1000;
+const PS_ENV = { ...process.env, LC_ALL: 'C' };
+let processTable = { at: 0, rows: new Map() };
+
+function processRows(force = false) {
+  if (!force && Date.now() - processTable.at < PROCESS_TABLE_TTL_MS) return processTable.rows;
+  const rows = new Map();
   try {
-    return execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf-8' }).trim();
+    const out = execFileSync('ps', ['-A', '-o', 'pid=,lstart=,command='], { encoding: 'utf-8', maxBuffer: 16 * 1024 * 1024, env: PS_ENV });
+    for (const line of out.split('\n')) {
+      const match = line.match(/^\s*(\d+)\s+(\S+\s+\S+\s+\d+\s+[\d:]+\s+\d{4})\s+(.*)$/);
+      if (match) rows.set(Number(match[1]), { start: match[2], command: match[3].trim() });
+    }
+  } catch (err) {}
+  processTable = { at: Date.now(), rows };
+  return rows;
+}
+
+function processExists(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === 'EPERM';
+  }
+}
+
+const SINGLE_PROCESS_WINDOW_MS = 250;
+
+function singleProcessRow(id) {
+  try {
+    const out = execFileSync('ps', ['-p', String(id), '-o', 'pid=,lstart=,command='], { encoding: 'utf-8', env: PS_ENV });
+    const match = out.match(/^\s*(\d+)\s+(\S+\s+\S+\s+\d+\s+[\d:]+\s+\d{4})\s+(.*)$/m);
+    if (!match) return null;
+    const row = { start: match[2], command: match[3].trim() };
+    processTable.rows.set(id, row);
+    return row;
+  } catch (err) {
+    return null;
+  }
+}
+
+function processRow(pid) {
+  const id = Number(pid);
+  if (!Number.isInteger(id) || id <= 0 || !processExists(id)) return null;
+  const cached = processRows().get(id);
+  if (cached) return cached;
+  if (Date.now() - processTable.at < SINGLE_PROCESS_WINDOW_MS) return singleProcessRow(id);
+  return processRows(true).get(id) || null;
+}
+
+const sameStart = (a, b) => a.replace(/\s+/g, ' ').trim() === b.replace(/\s+/g, ' ').trim();
+
+function processCommand(pid) {
+  const row = processRow(pid);
+  return row ? row.command : '';
+}
+
+function processStart(pid) {
+  try {
+    return execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf-8', env: PS_ENV }).trim();
   } catch (err) {
     return '';
   }
 }
 
-function processStart(pid) {
+function cachedProcessStart(pid) {
+  const row = processRow(pid);
+  return row ? row.start : '';
+}
+
+function localeProcessStart(pid) {
   try {
     return execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf-8' }).trim();
   } catch (err) {
     return '';
   }
+}
+
+function startMatches(pid, recordedStart) {
+  const current = cachedProcessStart(pid);
+  if (!current) return false;
+  return sameStart(current, recordedStart) || sameStart(localeProcessStart(pid), recordedStart);
 }
 
 function readTaskStart(taskId) {
@@ -106,11 +175,7 @@ function isGroupAlive(pid) {
 }
 
 function commandRunsAgent(command) {
-  const bins = [
-    resolveBin('agy'),
-    resolveBin('claude'),
-    resolveBin('codex')
-  ];
+  const bins = ['agy', 'claude', 'codex'];
   if (process.env.AGY_BIN) bins.push(process.env.AGY_BIN);
   if (process.env.CLAUDE_BIN) bins.push(process.env.CLAUDE_BIN);
   if (process.env.CODEX_BIN) bins.push(process.env.CODEX_BIN);
@@ -125,13 +190,13 @@ function verifyMarkerPath(taskId) {
 function isTaskProcessLive(taskId, pid) {
   if (fs.existsSync(verifyMarkerPath(taskId))) {
     const recordedStart = readTaskStart(taskId);
-    if (recordedStart && processStart(pid) !== recordedStart) return false;
+    if (recordedStart && !startMatches(pid, recordedStart)) return false;
     return isGroupAlive(pid);
   }
   const command = processCommand(pid);
   if (command) {
     const recordedStart = readTaskStart(taskId);
-    if (recordedStart && processStart(pid) !== recordedStart) return false;
+    if (recordedStart && !startMatches(pid, recordedStart)) return false;
     return commandRunsAgent(command);
   }
   return isGroupAlive(pid);
@@ -210,9 +275,13 @@ function cancelTask(taskId) {
 
 const RETENTION_FILE_PATTERN = /^(a2a_[\w-]+)\.(log|cancelled)$/;
 
+const PRUNE_INTERVAL_MS = 10 * 60 * 1000;
+let lastPruneAt = 0;
+
 function pruneOldLogs() {
   const days = envInt('A2A_LOG_RETENTION_DAYS', 14);
-  if (days <= 0) return;
+  if (days <= 0 || Date.now() - lastPruneAt < PRUNE_INTERVAL_MS) return;
+  lastPruneAt = Date.now();
   const cutoff = Date.now() - days * 86400000;
   let files = [];
   try {
@@ -223,11 +292,12 @@ function pruneOldLogs() {
   for (const file of files) {
     const match = RETENTION_FILE_PATTERN.exec(file);
     if (!match) continue;
-    const pid = readTaskPid(match[1]);
-    if (pid && isTaskProcessLive(match[1], pid)) continue;
     try {
       const full = path.join(LOGS_DIR, file);
-      if (fs.statSync(full).mtimeMs < cutoff) fs.unlinkSync(full);
+      if (fs.statSync(full).mtimeMs >= cutoff) continue;
+      const pid = readTaskPid(match[1]);
+      if (pid && isTaskProcessLive(match[1], pid)) continue;
+      fs.unlinkSync(full);
     } catch (err) {}
   }
 }
