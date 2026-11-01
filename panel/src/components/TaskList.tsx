@@ -3,7 +3,8 @@ import { Button, Card, Empty, Flex, Popconfirm, Table, Tag, Tooltip, Typography 
 import type { TableColumnsType } from "antd";
 import { StopOutlined } from "@ant-design/icons";
 import type { Task } from "../api";
-import { formatAgo, formatDateTime, formatDuration } from "../format";
+import { formatAgo, formatDateTime } from "../format";
+import { LiveDuration } from "./LiveDuration";
 import { StatusTag } from "./StatusTag";
 import { AccountAvatar } from "./AccountAvatar";
 
@@ -55,7 +56,7 @@ export function TaskList({ tasks, loading, isMobile, cancelling, onOpen, onCance
             <Flex justify="space-between" align="center" gap={8}>
               <StatusTag task={task} />
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                {formatAgo(task.startedAt)} · {formatDuration(task.durationMs)}
+                {formatAgo(task.startedAt)} · <LiveDuration task={task} />
               </Typography.Text>
             </Flex>
             <Flex align="center" gap={6} wrap style={{ marginTop: 8 }}>
@@ -135,7 +136,7 @@ export function TaskList({ tasks, loading, isMobile, cancelling, onOpen, onCance
         </Tooltip>
       ),
     },
-    { title: "Duration", dataIndex: "durationMs", width: 100, render: (value: number | null) => formatDuration(value) },
+    { title: "Duration", dataIndex: "durationMs", width: 100, render: (_: number | null, task: Task) => <LiveDuration task={task} /> },
     {
       title: "",
       key: "actions",

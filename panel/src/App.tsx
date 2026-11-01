@@ -66,7 +66,6 @@ function Panel() {
   const [tasksLoading, setTasksLoading] = useState(true);
   const [serverStartedAtMs, setServerStartedAtMs] = useState<number | null>(null);
   const [uptimeNow, setUptimeNow] = useState(() => Date.now());
-  const [durationNow, setDurationNow] = useState(() => Date.now());
 
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
   const [updateOpen, setUpdateOpen] = useState(false);
@@ -90,11 +89,19 @@ function Panel() {
   const updating = versionInfo?.update.state === "installing" || versionInfo?.update.state === "restarting";
   const showUpdate = Boolean(versionInfo && (versionInfo.updateAvailable || updating || versionInfo.update.state === "installed"));
 
-  useServerEvent("tasks", (data: { tasks: Task[] }) => {
-    if (Array.isArray(data?.tasks)) {
+  useServerEvent("tasks", (data: { tasks: Task[]; removed?: string[]; full?: boolean }) => {
+    if (!Array.isArray(data?.tasks)) return;
+    if (data.full !== false) {
       setRawTasks(data.tasks);
-      setTasksLoading(false);
+    } else {
+      const changed = new Map(data.tasks.map((task) => [task.id, task]));
+      const removed = new Set(data.removed ?? []);
+      setRawTasks((current) => {
+        const kept = (current ?? []).filter((task) => !removed.has(task.id) && !changed.has(task.id));
+        return [...data.tasks, ...kept].sort((a, b) => String(b.startedAt ?? "").localeCompare(String(a.startedAt ?? "")));
+      });
     }
+    setTasksLoading(false);
   });
 
   const refreshTasks = useCallback(async () => {
@@ -111,16 +118,6 @@ function Panel() {
     }, 30000);
     return () => clearInterval(timer);
   }, []);
-
-  const hasRunning = (rawTasks ?? []).some((task) => task.status === "running");
-
-  useEffect(() => {
-    if (!hasRunning) return;
-    const timer = setInterval(() => {
-      setDurationNow(Date.now());
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [hasRunning]);
 
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
@@ -156,19 +153,7 @@ function Panel() {
     />
   );
 
-  const all = useMemo(() => {
-    if (!rawTasks) return [];
-    return rawTasks.map((task) => {
-      if (task.status === "running") {
-        const startMs = Date.parse(task.startedAt);
-        return {
-          ...task,
-          durationMs: Number.isNaN(startMs) ? null : Math.max(0, durationNow - startMs),
-        };
-      }
-      return task;
-    });
-  }, [rawTasks, durationNow]);
+  const all = useMemo(() => rawTasks ?? [], [rawTasks]);
 
   const counts = useMemo(() => {
     const result = { running: 0, completed: 0, failed: 0, cancelled: 0, stale: 0 };

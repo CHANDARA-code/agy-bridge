@@ -439,6 +439,12 @@ export interface AccountModels {
   error: string | null;
 }
 
+export interface LogChunk {
+  text: string;
+  next: number;
+  reset: boolean;
+}
+
 export interface TeamTemplate {
   id: string;
   title: string;

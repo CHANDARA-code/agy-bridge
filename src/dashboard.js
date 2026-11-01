@@ -730,13 +730,43 @@ async function handleTeamRuns(req, res, method, pathname) {
   return true;
 }
 
-function serveTaskLog(res, id) {
-  const full = path.join(LOGS_DIR, `${id}.log`);
-  if (!fs.existsSync(full)) return sendText(res, 404, 'Not found');
+const LOG_TRUNCATED = '[... earlier output truncated ...]\n';
+
+function completeUtf8End(buf) {
+  for (let back = 1; back <= Math.min(3, buf.length); back++) {
+    const byte = buf[buf.length - back];
+    if ((byte & 0xc0) === 0x80) continue;
+    const need = byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : byte >= 0xc0 ? 2 : 1;
+    return need > back ? buf.length - back : buf.length;
+  }
+  return buf.length;
+}
+
+function readLogChunk(full, from) {
   const size = fs.statSync(full).size;
   const limit = TAIL_BYTES * 5;
-  const body = readTail(full, size > limit ? limit : size);
-  return sendText(res, 200, size > limit ? `[... earlier output truncated ...]\n${body}` : body);
+  const reset = !(Number.isInteger(from) && from >= 0 && from <= size && size - from <= limit);
+  if (!reset && from === size) return { reset: false, next: size, text: '' };
+  const start = reset ? Math.max(0, size - limit) : from;
+  const buf = Buffer.alloc(size - start);
+  const fd = fs.openSync(full, 'r');
+  try {
+    fs.readSync(fd, buf, 0, buf.length, start);
+  } finally {
+    fs.closeSync(fd);
+  }
+  let skip = 0;
+  if (reset && start > 0) while (skip < buf.length && skip < 3 && (buf[skip] & 0xc0) === 0x80) skip++;
+  const end = completeUtf8End(buf);
+  const text = buf.subarray(skip, Math.max(skip, end)).toString('utf-8');
+  return { reset, next: start + Math.max(skip, end), text: reset && start > 0 ? LOG_TRUNCATED + text : text };
+}
+
+function serveTaskLog(res, id, query) {
+  const full = path.join(LOGS_DIR, `${id}.log`);
+  if (!fs.existsSync(full)) return sendText(res, 404, 'Not found');
+  if (query.has('from')) return sendJson(res, 200, readLogChunk(full, Number(query.get('from'))));
+  return sendText(res, 200, readLogChunk(full, -1).text);
 }
 
 function serveStatic(res, pathname, token) {
@@ -774,7 +804,7 @@ function serveStatic(res, pathname, token) {
 const eventClients = new Set();
 let watcherTimer = null;
 let lastTasksStamp = '';
-let lastTasksFingerprint = '';
+let lastTaskPrints = new Map();
 let lastTasksList = [];
 let lastUsageStamp = '';
 let lastTeamsStamp = '';
@@ -816,8 +846,50 @@ function getTasksStamp() {
   }
 }
 
-function getTasksFingerprint(tasks) {
-  return JSON.stringify(tasks.map((t) => (t.status === 'running' ? { ...t, durationMs: null } : t)));
+const PROGRESS_INTERVAL_MS = 5000;
+
+function taskPrints(tasks) {
+  return new Map(tasks.map((t) => [t.id, {
+    state: JSON.stringify(t.status === 'running' ? { ...t, durationMs: null, updatedAt: null, sizeBytes: null } : t),
+    full: JSON.stringify(t.status === 'running' ? { ...t, durationMs: null } : t),
+    sentAt: 0
+  }]));
+}
+
+const logClients = new Set();
+
+function sendLogChunk(client, always = false) {
+  let chunk;
+  try {
+    chunk = readLogChunk(path.join(LOGS_DIR, `${client.id}.log`), client.next);
+  } catch (err) {
+    return;
+  }
+  if (!always && !chunk.reset && !chunk.text) return;
+  client.next = chunk.next;
+  writeClient(client.res, `id: ${chunk.next}\nevent: log\ndata: ${JSON.stringify(chunk)}\n\n`);
+}
+
+function handleLogStream(req, res, id, query) {
+  if (!fs.existsSync(path.join(LOGS_DIR, `${id}.log`))) return sendJson(res, 404, { error: 'Task not found' });
+  if (logClients.size >= 16) return sendJson(res, 503, { error: 'Too many log streams' });
+  const lastEventId = req.headers['last-event-id'];
+  const from = Number(lastEventId !== undefined && lastEventId !== '' ? lastEventId : query.get('from'));
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Content-Type-Options': 'nosniff'
+  });
+  writeClient(res, 'retry: 3000\n\n');
+  const client = { id, res, next: from };
+  sendLogChunk(client, true);
+  logClients.add(client);
+  syncWatcher();
+  res.on('close', () => {
+    logClients.delete(client);
+    syncWatcher();
+  });
 }
 
 function getUsageStamp() {
@@ -865,15 +937,28 @@ function watcherTick() {
   if (currentTasksStamp !== lastTasksStamp || hasRunning) {
     lastTasksStamp = currentTasksStamp;
     const currentTasks = listTasks();
-    const currentFingerprint = getTasksFingerprint(currentTasks);
-    if (currentFingerprint !== lastTasksFingerprint) {
-      lastTasksFingerprint = currentFingerprint;
-      lastTasksList = currentTasks;
-      broadcastEvent('tasks', { tasks: currentTasks });
-    } else {
-      lastTasksList = currentTasks;
+    const prints = taskPrints(currentTasks);
+    const now = Date.now();
+    const changed = [];
+    const nextPrints = new Map();
+    for (const task of currentTasks) {
+      const before = lastTaskPrints.get(task.id);
+      const next = prints.get(task.id);
+      const progressDue = before && before.full !== next.full && now - before.sentAt >= PROGRESS_INTERVAL_MS;
+      if (!before || before.state !== next.state || progressDue) {
+        changed.push(task);
+        nextPrints.set(task.id, { ...next, sentAt: now });
+      } else {
+        nextPrints.set(task.id, before);
+      }
     }
+    const removed = [...lastTaskPrints.keys()].filter((id) => !prints.has(id));
+    lastTaskPrints = nextPrints;
+    lastTasksList = currentTasks;
+    if (changed.length || removed.length) broadcastEvent('tasks', { tasks: changed, removed, full: false });
   }
+
+  for (const client of logClients) sendLogChunk(client);
 
   const currentUsageStamp = getUsageStamp();
   if (currentUsageStamp !== lastUsageStamp) {
@@ -892,7 +977,7 @@ function startWatcher() {
   if (watcherTimer) return;
   lastTasksStamp = getTasksStamp();
   lastTasksList = listTasks();
-  lastTasksFingerprint = getTasksFingerprint(lastTasksList);
+  lastTaskPrints = taskPrints(lastTasksList);
   lastUsageStamp = getUsageStamp();
   lastTeamsStamp = getTeamsStamp();
   pingTicks = 0;
@@ -905,6 +990,11 @@ function stopWatcher() {
     clearInterval(watcherTimer);
     watcherTimer = null;
   }
+}
+
+function syncWatcher() {
+  if (eventClients.size > 0 || logClients.size > 0) startWatcher();
+  else stopWatcher();
 }
 
 accountLogin.onLoginChange((evt) => {
@@ -934,23 +1024,19 @@ function handleEvents(req, res) {
     version: updates.versionInfo().current
   };
   writeClient(res, `event: hello\ndata: ${JSON.stringify(helloData)}\n\n`);
-  writeClient(res, `event: tasks\ndata: ${JSON.stringify({ tasks: listTasks() })}\n\n`);
+  writeClient(res, `event: tasks\ndata: ${JSON.stringify({ tasks: listTasks(), removed: [], full: true })}\n\n`);
   writeClient(res, `event: teams\ndata: {}\n\n`);
   writeClient(res, `event: usage\ndata: {}\n\n`);
   updates.checkForUpdate().then((info) => writeClient(res, `event: version\ndata: ${JSON.stringify(info)}\n\n`)).catch(() => {});
 
   const client = { req, res };
   eventClients.add(client);
-  if (eventClients.size === 1) {
-    startWatcher();
-  }
+  syncWatcher();
 
   const cleanup = () => {
     if (!eventClients.has(client)) return;
     eventClients.delete(client);
-    if (eventClients.size === 0) {
-      stopWatcher();
-    }
+    syncWatcher();
   };
 
   req.on('close', cleanup);
@@ -1100,11 +1186,15 @@ async function handle(req, res, pathname, { token }) {
     if (await handleTeamRuns(req, res, method, pathname)) return true;
   }
 
-  const taskMatch = pathname.match(/^\/api\/tasks\/([\w-]+)(?:\/(log|cancel))?$/);
+  const taskMatch = pathname.match(/^\/api\/tasks\/([\w-]+)(?:\/(log\/stream|log|cancel))?$/);
   if (taskMatch && TASK_ID_PATTERN.test(taskMatch[1])) {
     const [, id, action] = taskMatch;
+    if (method === 'GET' && action === 'log/stream') {
+      handleLogStream(req, res, id, new URL(req.url, 'http://127.0.0.1').searchParams);
+      return true;
+    }
     if (method === 'GET' && action === 'log') {
-      serveTaskLog(res, id);
+      serveTaskLog(res, id, new URL(req.url, 'http://127.0.0.1').searchParams);
       return true;
     }
     if (method === 'GET' && !action) {
