@@ -424,9 +424,17 @@ Besides signing in, an account can use an API key from a model provider. It runs
 
 - The base URLs and suggested models come from each provider's Claude Code or Codex guide as of November 2026. Model names change often; you can edit them, and the model picker lists the provider's current models where it offers a free model list.
 - Codex accounts get their own `config.toml` with a `model_providers` entry; Codex only speaks the Responses API, so providers that only offer Chat Completions cannot run through Codex.
-- The service logos come from [LobeHub Icons](https://github.com/lobehub/lobe-icons) (MIT, see `panel/src/assets/service-logos/LICENSE`); they are their owners' trademarks and only identify each service.
+- The service logos come from [LobeHub Icons](https://github.com/lobehub/lobe-icons) (MIT, see `panel/src/assets/service-logos/LICENSE`), and the Anthropic API uses the same Claude glyph as Claude Code (Simple Icons, CC0); they are their owners' trademarks and only identify each service.
 - Anthropic says Claude Code is only supported on Claude models. Other providers' Claude Code endpoints are provided and supported by those providers.
 - From the command line: `a2a-panel accounts services` lists the services, `printf %s "$KEY" | a2a-panel accounts add deepseek-1 --service deepseek` adds one (the key is read from stdin or `A2A_API_KEY`, never from the command line), and `a2a-panel accounts key <id>` replaces a key.
+
+**Choosing a service.** Each service shows its logo and region, grouped by the CLI it runs with. Type a name such as "qwen" or "deepseek" to filter.
+
+![Add an API key account](docs/screenshots/25-api-key-services.png)
+
+**Key accounts next to sign-in accounts.** A key account shows its service, the last 4 characters of the key, its model and whether the key works. Change key replaces it; there is no sign-in.
+
+![API key accounts on the Accounts page](docs/screenshots/26-api-key-accounts.png)
 
 ### Names and Profile Pictures
 
@@ -487,7 +495,7 @@ Emails are masked in these screenshots.
 
 ![Accounts page](docs/screenshots/18-accounts.png)
 
-**Add account.** Pick the CLI and sign in with its own login; the new account never replaces an existing sign-in.
+**Add account.** Pick the CLI and sign in with its own login, or use an API key from DeepSeek, Kimi, GLM, MiniMax, Qwen, OpenRouter, Anthropic, OpenAI and others. A new account never replaces an existing sign-in.
 
 ![Add account dialog](docs/screenshots/19-add-account.png)
 
@@ -613,6 +621,8 @@ Use a Telegram bot of your own to follow and steer a2a-panel from your phone. a2
 3. Choose who may control it: the allowed user ids are filled in from that chat (a group chat needs them; a private chat works without). Starting work from Telegram (`/run`, `/team`, the Build button) stays off until you turn it on, and `/run` needs a workspace. Messages for your team leader are delivered either way.
 4. Turn it on, save, and press **Send test message**.
 
+![Telegram remote control in Settings](docs/screenshots/24-settings-telegram.png)
+
 The bot only listens to that one chat, ignores other people and other bots, and ignores commands older than 10 minutes (sent while the server was down). If the bot already sends its updates to a webhook, a2a-panel says so and does not take it over; use a separate bot.
 
 **Commands**
@@ -652,6 +662,10 @@ The bot token is kept in `settings.json` in the data folder (mode 0600) and is n
 ## 10. Limits
 
 Change these in the panel under Settings: they are saved in `settings.json` in the data folder and apply to the next task, without a restart, for the server, the MCP server and the CLI. An environment variable with the same name still works and wins over the saved value; the panel shows it read-only. `0` turns a limit off.
+
+**Settings page.** Changed values are marked and can go back to their default; a value set by an environment variable is marked and read-only (here the update check).
+
+![Settings page](docs/screenshots/23-settings.png)
 
 | Variable | Default | Effect |
 |---|---|---|
