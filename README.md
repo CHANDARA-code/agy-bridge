@@ -1,6 +1,6 @@
 # a2a-panel
 
-Delegate coding work from **Claude Code** to a team of **Google Antigravity** (`agy`) specialists, and watch and control it from a web panel.
+Delegate coding work from **Claude Code** to a team of **Google Antigravity** (`agy`) specialists, or to teams that mix Antigravity, Claude Code and Codex accounts, and watch and control it from a web panel or from Telegram.
 
 Claude Code stays the team leader: it plans, splits the work and reviews the result. The heavy reading, editing and test running happens in Antigravity, so it uses your Antigravity quota instead of your Claude context. Claude reads back a short result: status, token usage, a `git` change summary and the tail of the output.
 
@@ -11,6 +11,8 @@ Claude Code stays the team leader: it plans, splits the work and reviews the res
 - **Sessions**: continue an Antigravity conversation by id instead of resending context.
 - **Presets**: your coding style, frontend and API libraries and default technology choices, kept as markdown files and sent to the specialists they apply to.
 - **Standard interfaces**: an MCP server for Claude Code, and an A2A-style HTTP / JSON-RPC server for other clients.
+- **Settings page**: time limits, how many agents run at once, log retention and update checks, changed from the panel without a restart.
+- **Telegram remote control**: check on your agents, start work, approve team plans and answer your team leader from your phone.
 
 ## Requirements
 
@@ -30,7 +32,7 @@ node cli.js init        # registers the MCP server with Claude Code
 node cli.js autostart enable   # optional: start the server and dashboard at login (see below)
 ```
 
-With npm: `npm install -g a2a-panel`, then `a2a-panel doctor` and `a2a-panel init`. Restart Claude Code (or run `/mcp`) afterwards. In the examples below `a2a-panel` stands for `node cli.js` if you installed from a clone. To remove it again, see [13. Uninstall](#13-uninstall).
+With npm: `npm install -g a2a-panel`, then `a2a-panel doctor` and `a2a-panel init`. Restart Claude Code (or run `/mcp`) afterwards. In the examples below `a2a-panel` stands for `node cli.js` if you installed from a clone. To remove it again, see [14. Uninstall](#14-uninstall).
 
 **Coming from `agy-bridge`?** This project used to be called `agy-bridge`. Run `a2a-panel init` (or `node cli.js init`) once: it removes the old `agy-bridge` MCP registration from Claude Code and registers `a2a-panel`. An npm install keeps using an existing `~/.agy-bridge` data folder, so your task history and presets stay. The short `a2a` command still works.
 
@@ -99,6 +101,7 @@ It provides Claude Code with the following tools:
 - `a2a_get_task_status(task_id)`
 - `a2a_cancel_task(task_id)`
 - `a2a_validate_delivery(task_summary, acceptance_criteria, verification_command, workspace_path, account)`
+- `a2a_notify_user(text, choices)` and `a2a_wait_for_user(timeout_seconds)`: talk to you on Telegram (see [8. Telegram remote control](#8-telegram-remote-control))
 
 ### In Claude Code, you can:
 > "Design the database schema, then delegate the API endpoints to the Antigravity api-engineer and have the test-engineer cover them."
@@ -166,12 +169,14 @@ When running `a2a-panel server start`:
 - **Task Status**: `GET http://127.0.0.1:5188/tasks/:id`. Returns status, output, `usage`, `verification`, `conversationId`, `changes`, `workspace`, `account` and `provider`. JSON-RPC `tasks/get` returns the same fields.
 - **Server-Sent Events Stream**: `GET http://127.0.0.1:5188/api/events` (`text/event-stream`). Streams real-time updates to the web panel so idle clients make no repeating polling requests. Emits initial burst on connect, then pushes updates only when data changes:
   - `hello`: `{"uptimeSeconds": <number>, "pid": <number>}` on client connect.
-  - `tasks`: `{"tasks": [...]}` on connect and whenever task logs, process status, or task list fingerprint changes.
+  - `tasks`: `{"tasks": [...], "removed": [], "full": true}` with the whole list on connect, then `{"tasks": [<changed tasks>], "removed": [<task ids>], "full": false}` with only the tasks that changed. A running task whose only change is more output is sent at most every 5 seconds.
+  - `settings`: `{}` when settings are saved; `telegram`: the Telegram connection status whenever it changes.
   - `teams`: `{}` on connect and whenever team definitions or team run records change.
   - `usage`: `{}` on connect and whenever `usage.jsonl` changes.
   - `login`: `{"id": <loginId>, "state": <state>}` whenever an account login session updates (session details are fetched separately via `GET /api/accounts/logins/:id`).
   - `: ping`: periodic comment sent every 25 seconds while idle to keep the connection alive.
   - The panel opens one stream per visible tab, closes it while the tab is hidden, and reconnects on its own; at most 32 streams are served at once (`A2A_MAX_EVENT_CLIENTS`).
+- **Live task log**: `GET /api/tasks/:id/log?from=<byte offset>` returns `{"text", "next", "reset"}` with the output after that offset (`reset: true` means the text replaces what you have, starting with the newest 30 KB). `GET /api/tasks/:id/log/stream?from=<offset>` pushes the same chunks as `log` events while the task writes; each event's `id` is the next offset, so a reconnecting `EventSource` continues where it stopped.
 - **JSON-RPC 2.0**: `POST http://127.0.0.1:5188/rpc` with `message/send`, `tasks/get`, `tasks/list` and `tasks/cancel`. Streaming and push notifications are not implemented; the agent card says so.
 
 ---
@@ -180,7 +185,7 @@ When running `a2a-panel server start`:
 
 Open `http://127.0.0.1:5188/dashboard` (or run `a2a-panel dashboard`).
 
-- Pages: Tasks, Teams, Accounts, Usage and Presets. Updates are pushed to the page over one event stream, so an idle panel sends no repeating requests.
+- Pages: Tasks, Teams, Accounts, Usage, Presets and Settings (the gear button). Updates are pushed to the page over one event stream, so an idle panel sends no repeating requests. After the first full list, the stream sends only the tasks that changed, and an open task's log loads only the new output.
 - Update button: when npm has a newer version, the header shows "Update to x.y.z". For a global npm install, Update now installs it and restarts the server (refused while tasks or team runs are running), and the page reloads on the new version; for a git clone it shows the commands to run. The check asks the npm registry at most every 6 hours; `A2A_UPDATE_CHECK=0` turns it off.
 - Monitor: stat cards, status filter, search, per-task detail with live log. Works on mobile.
 - Control: dispatch a task (specialist, workspace, prompt, preset, plan/edit mode, effort), preview the exact prompt, cancel a running task, run a task again.
@@ -408,6 +413,20 @@ Use the web panel's Accounts view or the CLI to sign into accounts:
 - **Codex (`codex`)**: Browser login opens the OAuth flow and listens on `http://localhost:1455` (one active browser login session allowed at a time due to the fixed port). Codex also supports device code authentication (`--device-auth`) where a URL (`https://auth.openai.com/codex/device`) and a one-time code (e.g. `ABCD-EFGH2`) are displayed.
 - **Antigravity (`agy`)**: the panel shows the Google sign-in link; after you sign in, the page shows a code that you paste into the panel. agy only offers this in a terminal, so a2a-panel runs it in a pseudo-terminal (`script`). A Terminal-window sign-in is available as a fallback, and `a2a-panel accounts login <id>` signs in from your own terminal.
 
+### API key accounts
+
+Besides signing in, an account can use an API key from a model provider. It runs Claude Code or Codex against that provider, so tasks, teams, token usage and budgets work like any other account. Add one under Accounts, Add account, **Use an API key**: pick the service, paste the key, and a2a-panel fills in the base URL and suggested models from the provider's own setup guide and checks the key where the provider has a free check.
+
+| Runs with | Services |
+|---|---|
+| Claude Code (`claude`) | Anthropic API, DeepSeek, Kimi (Moonshot AI, international and China), Z.ai GLM, Zhipu GLM (China), MiniMax (international and China), Alibaba Cloud Model Studio (Qwen), OpenRouter, Volcengine Ark, and any other Anthropic-compatible endpoint such as a LiteLLM gateway |
+| Codex (`codex`) | OpenAI API, Kimi, MiniMax, OpenRouter, Groq, and any other endpoint that speaks the OpenAI Responses API |
+
+- The base URLs and suggested models come from each provider's Claude Code or Codex guide as of November 2026. Model names change often; you can edit them, and the model picker lists the provider's current models where it offers a free model list.
+- Codex accounts get their own `config.toml` with a `model_providers` entry; Codex only speaks the Responses API, so providers that only offer Chat Completions cannot run through Codex.
+- Anthropic says Claude Code is only supported on Claude models. Other providers' Claude Code endpoints are provided and supported by those providers.
+- From the command line: `a2a-panel accounts services` lists the services, `printf %s "$KEY" | a2a-panel accounts add deepseek-1 --service deepseek` adds one (the key is read from stdin or `A2A_API_KEY`, never from the command line), and `a2a-panel accounts key <id>` replaces a key.
+
 ### Names and Profile Pictures
 
 Account cards show the account's real name and email where the provider makes them available:
@@ -582,25 +601,62 @@ When connected via MCP, Claude Code can inspect and drive teams using:
 
 ![Team run with a plan](docs/screenshots/22-team-run.png)
 
-## 8. Security model
+## 8. Telegram remote control
+
+Use a Telegram bot of your own to follow and steer a2a-panel from your phone. a2a-panel asks Telegram for new messages itself (long polling), so no port is opened on your computer and nothing has to be reachable from the internet.
+
+**Set it up** in the panel under Settings (the gear button), Telegram remote control. The page walks you through it:
+
+1. In Telegram, open [@BotFather](https://t.me/BotFather), send `/newbot`, pick a name and a username ending in `bot`, and paste the token it gives you.
+2. Open your new bot and press Start (for a group: add the bot and send a message there). Press **Find my chat**: the panel lists the chats that wrote to the bot, with their ids and the people in them. Pick yours.
+3. Choose who may control it: the allowed user ids are filled in from that chat (a group chat needs them; a private chat works without). Starting work from Telegram (`/run`, `/team`, the Build button) stays off until you turn it on, and `/run` needs a workspace. Messages for your team leader are delivered either way.
+4. Turn it on, save, and press **Send test message**.
+
+The bot only listens to that one chat, ignores other people and other bots, and ignores commands older than 10 minutes (sent while the server was down). If the bot already sends its updates to a webhook, a2a-panel says so and does not take it over; use a separate bot.
+
+**Commands**
+
+| Command | What it does |
+|---|---|
+| `/status` | Version, uptime, agents running against the limit, team runs, signed-in accounts, leader inbox |
+| `/tasks`, `/task <id>` | Latest tasks; one task with the end of its log |
+| `/runs`, `/teams` | Latest team runs; your teams |
+| `/run <role>[@account] <prompt>` | Start one agent in the configured workspace (needs "Allow starting work") |
+| `/team <team id> <goal>` | Plan a team run; the plan arrives with **Build** and **Cancel** buttons |
+| `/cancel <task or run id>` | Stop a task or a team run |
+| `/usage` | Tokens per account today, with budget use |
+| `/do <text>` or any text | A message for your team leader |
+
+You also get a message when a task finishes (with a Log button), when a team plan is ready (with Build and Cancel), and when a team run ends. Tasks that belong to a team run are reported once, with the run, so six parallel agents don't send six messages.
+
+**Your team leader listens too.** Claude Code (after `a2a-panel init`) and any other MCP client that runs `a2a-panel mcp`, Antigravity included, get two tools:
+
+- `a2a_notify_user(text, choices)` sends you a message; `choices` adds up to six answer buttons.
+- `a2a_wait_for_user(timeout_seconds)` waits for your next message, `/do` text or button tap and returns it.
+
+Tell your leader, for example: "When you finish a step or need a decision, message me with a2a_notify_user and wait for my answer with a2a_wait_for_user." Messages sent while no leader is waiting are kept (up to 50) until one asks. Both tools talk to the running server, so the server must be running (`a2a-panel server start` or start at login).
+
+The bot token is kept in `settings.json` in the data folder (mode 0600) and is never sent back by the API. You can also set every option as an environment variable (`A2A_TELEGRAM_ENABLED`, `A2A_TELEGRAM_BOT_TOKEN`, `A2A_TELEGRAM_CHAT_ID`, `A2A_TELEGRAM_ALLOWED_USER_IDS`, `A2A_TELEGRAM_ALLOW_RUN`, `A2A_TELEGRAM_WORKSPACE`, `A2A_TELEGRAM_NOTIFY_TASKS`, `A2A_TELEGRAM_NOTIFY_RUNS`).
+
+## 9. Security model
 
 - The server only answers requests whose `Host` header is `127.0.0.1`, `localhost` or `[::1]` on the server port (blocks DNS rebinding).
 - No CORS headers are sent.
 - Every non-GET request needs the token in `the `token` file in the data folder` (mode 0600, created on first start). Send it as `X-A2A-Token: <token>` or `Authorization: Bearer <token>`. A request with an `Origin` header must be same-origin.
 - The panel receives the token inside its own HTML, which only same-origin pages can read.
-- The MCP server and the CLI run tasks in-process and do not use the HTTP API, so they need no token.
+- The MCP server and the CLI run tasks in-process and do not use the HTTP API. Only the two Telegram tools (`a2a_notify_user`, `a2a_wait_for_user`) call the running server, with the token from the token file.
 - Cancel stops the whole agent process group (SIGTERM, then SIGKILL after 5 seconds). Tasks started before this version run without their own process group, so cancel stops the agent and its descendants by walking the process tree.
 - Panel dispatch defaults to "Plan only". "Edit files" lets the agent edit files and run commands in the chosen workspace.
 
-## 9. Limits
+## 10. Limits
 
-Set these environment variables for the server, the MCP server and the CLI. `0` turns a limit off.
+Change these in the panel under Settings: they are saved in `settings.json` in the data folder and apply to the next task, without a restart, for the server, the MCP server and the CLI. An environment variable with the same name still works and wins over the saved value; the panel shows it read-only. `0` turns a limit off.
 
 | Variable | Default | Effect |
 |---|---|---|
 | `A2A_TASK_TIMEOUT_MS` | `3600000` (60 min) | Stops a task that runs longer than this and marks it failed. |
 | `A2A_IDLE_TIMEOUT_MS` | `0` (off) | Stops a task that prints nothing for this long. Off by default because headless `agy` can stay quiet while it works. |
-| `A2A_MAX_CONCURRENT` | `4` | Refuses a new task while this many agents are running, across the server, MCP server and CLI. |
+| `A2A_MAX_CONCURRENT` | `6` | Refuses a new task while this many agents are running, across the server, MCP server and CLI. |
 | `A2A_MAX_OUTPUT_CHARS` | `200000` | Output kept in memory per task. The log file under `logs/` keeps everything. |
 | `A2A_KILL_ESCALATION_MS` | `5000` | Time between SIGTERM and SIGKILL when stopping a task. |
 | `A2A_VERIFY_TIMEOUT_MS` | `600000` (10 min) | Limit for the bridge's own run of a `verification_command`. |
@@ -611,7 +667,16 @@ Set these environment variables for the server, the MCP server and the CLI. `0` 
 
 A stopped task shows `failed` with the reason (`Timed out after …` or `No output for …`).
 
-## 10. Usage tracking and sessions
+**Running many agents at once.** For 40 agents and tasks that take 3 or 4 hours, set these in Settings:
+
+- **Agents at the same time**: 40 (up to 200). Each running agent is its own Claude Code, Codex or Antigravity process, so memory, CPU and each provider's rate limits set the real ceiling; spread the agents over several accounts.
+- **Task time limit**: longer than your longest task, for example 300 minutes, or 0 for no limit. The default of 60 minutes stops longer tasks.
+- **Silence limit**: keep it at 0, or set it well above the longest quiet stretch, because agents can think for minutes without printing.
+- From Claude Code, start long tasks with `is_async: true` and check them with `a2a_get_task_status`, so no single tool call has to wait hours.
+
+What the server does to stay fast: it reads the process table once per second for all running tasks instead of twice per task, keeps parsed task summaries and team runs until their files change, cleans up old logs at most every 10 minutes, and pushes only changed tasks to the panel; a running task whose only change is more output is pushed at most every 5 seconds, and an open task's log streams by itself. Measured with 40 agents each printing 20 lines a second: the server used about 7% of one CPU core and 136 MB of memory, the task list answered in about 8 ms, and the panel received about 100 KB in 30 seconds. On macOS, start at login (`a2a-panel autostart enable`) runs the server as an interactive process; before 0.4.0 macOS gave it the light background limits on CPU and disk it uses for services that don't say what they are. `a2a-panel server restart` updates an existing start-at-login service.
+
+## 11. Usage tracking and sessions
 
 Tasks run with `--output-format stream-json` (or JSONL streaming for Claude Code and Codex). The bridge turns the event stream into readable text, and records token usage per task and per account.
 
@@ -620,7 +685,7 @@ Tasks run with `--output-format stream-json` (or JSONL streaming for Claude Code
 - Pass `conversation_id` (from an earlier result) to continue that conversation instead of resending context. Pass `model` to pick a model.
 - A run whose final status from the agent is not `SUCCESS` is marked failed.
 
-## 11. Verification gate
+## 12. Verification gate
 
 If a task has a `verification_command` (MCP tool, `/tasks/send`, or JSON-RPC `message/send`), the agent is told to run it, and then **the bridge runs it again itself** in the workspace once the agent has finished successfully.
 
@@ -628,11 +693,11 @@ If a task has a `verification_command` (MCP tool, `/tasks/send`, or JSON-RPC `me
 - Non-zero exit or a timeout (`A2A_VERIFY_TIMEOUT_MS`, default 10 minutes): the task is marked `failed`, and the result includes the command's output tail.
 - The result and the log record the outcome as "run by the bridge (not the agent)". `a2a_validate_delivery` uses the same gate.
 - If the agent itself failed, the command is not run.
-- The command runs through `sh -c` with your user's permissions, like the agent does. It can't be cancelled while it runs; the timeout is the limit.
+- The command runs through `sh -c` with your user's permissions, like the agent does. Cancelling the task stops it; otherwise the timeout is the limit.
 
 A passing command only proves what that command checks. If the agent also wrote the tests, a green run says little, so review the diff too.
 
-## 12. Tests
+## 13. Tests
 
 ```bash
 npm test
@@ -642,7 +707,7 @@ node --test test/server.test.js test/accounts.test.js test/teams.test.js
 
 The tests start a server on a random port with fake agent binaries, a temporary accounts directory, a temporary logs directory and a temporary token, so they use no agent quota and leave no history behind.
 
-## 13. Uninstall
+## 14. Uninstall
 
 Run the steps in this order: the first ones use the `a2a-panel` command, which the later ones remove.
 
@@ -670,12 +735,12 @@ npm unlink -g a2a-panel        # if you ran "npm link" in a clone
 rm -rf ~/path/to/a2a-panel     # if you cloned it: delete the clone folder (this also deletes its data)
 ```
 
-**4. Delete your data (optional).** This is your task history, token usage, presets and the access token. Keep it if you might reinstall.
+**4. Delete your data (optional).** This is your task history, token usage, presets, settings (including a Telegram bot token) and the access token. Keep it if you might reinstall.
 
 | Installed from | Data folder |
 |---|---|
 | npm | `~/.a2a-panel` (or `~/.agy-bridge` if you used the old name) |
-| A clone | the clone folder itself: `logs/`, `presets/`, `token`, `server.log`, `server.err` (removed with the folder in step 3) |
+| A clone | the clone folder itself: `logs/`, `presets/`, `token`, `settings.json`, `telegram-*.json`, `server.log`, `server.err` (removed with the folder in step 3) |
 | `A2A_HOME` set | the folder it points to |
 
 ```bash

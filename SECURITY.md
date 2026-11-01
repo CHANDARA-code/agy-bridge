@@ -17,6 +17,12 @@ Use `--mode plan` for work that must not change anything.
 - **Codex**: Uses `CODEX_HOME` per account.
 - **Antigravity**: each account has its own home that links to your real home except `.gemini` and `Library`; its `Library` excludes `Keychains` and has its own `Preferences` without `com.apple.security.plist`. On macOS each account gets its own keychain file with an empty password inside the `0700` account folder, so its sign-in is protected by file permissions only (like Codex's `auth.json`). agy may also store the sign-in in `.gemini/antigravity-cli/antigravity-oauth-token` inside the account home. Your real keychain, search list and keychain settings are never modified. Verified on macOS; on Linux, check that a new account shows signed out before signing in.
 
+## API key accounts
+
+- An API key is stored in `api-key` inside that account's folder (mode `0600`, folder `0700`). It is never written to `accounts.json`, never returned by the API (only its last 4 characters are shown), and never accepted on the command line, where other users could see it in the process list.
+- When a task runs, the key is passed to Claude Code or Codex in an environment variable (`ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `CODEX_API_KEY` or `A2A_PROVIDER_API_KEY`). The agent process can read its own environment, like any tool you give a key to. Key variables from your shell (`ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `OPENAI_API_KEY`, …) are removed from those tasks so they cannot leak to another provider.
+- To check a key, the server sends it only to that provider's own model or key endpoint over HTTPS. Base URLs must be `https://`, except `http://localhost` for a local gateway.
+
 ## Account names and photos
 
 - To show real names and photos, a2a-panel reads the sign-in each tool stored for that account: the id_token claims in Codex's `auth.json` (read locally), the `oauthAccount` display name in Claude Code's `.claude.json` (no tokens), and agy's stored token (keychain item `gemini` or the account's token file, whichever is newer), whose access token is sent only to `https://www.googleapis.com/oauth2/v3/userinfo`.
@@ -43,6 +49,15 @@ Use `--mode plan` for work that must not change anything.
 ## Team runs
 
 Leader plans are untrusted text: a leader model reads repository content that could contain prompt injection. Plan-first mode shows every instruction and check command for review before execution. The bridge executes leader-written verification commands only after you explicitly approve a plan; in unapproved or accept-edits runs, verification commands are not run directly by the bridge on the host and are instead passed to the developer task as instructions.
+
+## Settings and Telegram remote control
+
+- Settings changed in the panel are saved in `settings.json` in the data folder with mode `0600`. `PUT /api/settings` needs the panel token. An environment variable with the same name wins and cannot be changed from the panel.
+- The Telegram bot token is never returned by `GET /api/settings` or any other endpoint (the panel only learns whether one is saved), and Telegram errors are reported without the request URL that contains it.
+- The server reaches Telegram by long polling `api.telegram.org`; it opens no port and accepts no webhook. It refuses a bot that has a webhook set.
+- Messages and button taps are acted on only when they come from the configured chat id, from a person (not a bot), and from one of the allowed user ids. With no allowed ids, only a private chat with the bot is answered; a group chat is ignored until you add ids. Everything else is ignored and counted. Commands older than 10 minutes are ignored.
+- Starting work (`/run`, `/team`, the Build button) is off until you turn on "Allow starting work from Telegram". `/run` uses only the workspace set in Settings; `/team` plans first and builds only after Build is pressed. Anyone who can write in that chat as an allowed user can then start agents with the same permissions as the panel, so keep the chat private and the allowed ids short. Messages for the team leader (`/do`, free text, answer buttons) are delivered whether or not starting work is on; your leader has its own tools to start agents, so treat those messages like instructions you type yourself.
+- Messages you send to the team leader are stored in `telegram-inbox.json` (mode `0600`, at most 50) until the leader reads them through `a2a_wait_for_user`, which, like `a2a_notify_user`, needs the panel token.
 
 ## The local HTTP server
 
